@@ -3,15 +3,24 @@ import {
   DEFAULT_GEOLOCATION_PROMPT,
   discoverModels,
   getProductionModelConfig,
+  type ImageQuality,
+  type ReasoningLevel,
+  type ResponseFormat,
 } from '@/lib/ai'
 import { requireAdminApi } from '@/lib/auth/admin'
 
-const FALLBACK_SETTINGS = {
+const FALLBACK_SETTINGS: {
+  temperature: number
+  maxOutputTokens: number
+  reasoningLevel: ReasoningLevel
+  imageQuality: ImageQuality
+  responseFormat: ResponseFormat
+} = {
   temperature: 0.2,
   maxOutputTokens: 1200,
-  reasoningLevel: 'medium' as const,
-  imageQuality: 'high' as const,
-  responseFormat: 'structured_json' as const,
+  reasoningLevel: 'medium',
+  imageQuality: 'high',
+  responseFormat: 'structured_json',
 }
 
 export async function GET() {
