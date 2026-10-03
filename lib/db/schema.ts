@@ -7,25 +7,38 @@ import {
   real,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
 
-export const modelConfigs = pgTable('model_configs', {
-  id: uuid('id').defaultRandom().primaryKey(),
-  name: varchar('name', { length: 128 }).notNull(),
-  provider: varchar('provider', { length: 64 }).notNull(),
-  model: varchar('model', { length: 128 }).notNull(),
-  prompt: text('prompt').notNull(),
-  temperature: real('temperature').notNull().default(0.2),
-  maxOutputTokens: integer('max_output_tokens').notNull().default(1200),
-  reasoningLevel: varchar('reasoning_level', { length: 32 }).notNull().default('medium'),
-  imageQuality: varchar('image_quality', { length: 32 }).notNull().default('high'),
-  responseFormat: varchar('response_format', { length: 64 }).notNull().default('structured_json'),
-  isProduction: boolean('is_production').notNull().default(false),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+export const modelConfigs = pgTable(
+  'model_configs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    name: varchar('name', { length: 128 }).notNull(),
+    provider: varchar('provider', { length: 64 }).notNull(),
+    model: varchar('model', { length: 128 }).notNull(),
+    prompt: text('prompt').notNull(),
+    temperature: real('temperature').notNull().default(0.2),
+    maxOutputTokens: integer('max_output_tokens').notNull().default(1200),
+    reasoningLevel: varchar('reasoning_level', { length: 32 }).notNull().default('medium'),
+    imageQuality: varchar('image_quality', { length: 32 }).notNull().default('high'),
+    responseFormat: varchar('response_format', { length: 64 }).notNull().default('structured_json'),
+    isProduction: boolean('is_production').notNull().default(false),
+    /** Singleton key: exactly one row may hold 'production'. */
+    productionSlot: varchar('production_slot', { length: 32 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('model_configs_production_slot_uidx').on(table.productionSlot),
+    uniqueIndex('model_configs_one_production_uidx')
+      .on(table.isProduction)
+      .where(sql`${table.isProduction} = true`),
+  ]
+)
 
 export const modelUsage = pgTable('model_usage', {
   id: uuid('id').defaultRandom().primaryKey(),

@@ -1,8 +1,9 @@
 import { classifyProviderError } from '../errors'
 import { normalizeGeoLocationResult } from '../normalize'
-import type { ModelExecutionResult, ModelRequest, VisionModelProvider } from '../types'
+import type { ModelExecutionResult, ModelRequest, ReasoningLevel, VisionModelProvider } from '../types'
 import { ProviderError } from '../types'
 import { getGeminiClient } from './gemini-client'
+import { getModelDefinition } from '../registry'
 
 function getClient() {
   try {
@@ -12,15 +13,34 @@ function getClient() {
   }
 }
 
+/** Map normalized reasoning level to Gemini thinkingBudget (tokens). */
+function thinkingBudgetFor(level: ReasoningLevel): number | undefined {
+  switch (level) {
+    case 'none':
+      return 0
+    case 'low':
+      return 1024
+    case 'medium':
+      return 4096
+    case 'high':
+      return 8192
+    default:
+      return undefined
+  }
+}
+
 export const geminiProvider: VisionModelProvider = {
   async run(request: ModelRequest): Promise<ModelExecutionResult> {
     const started = Date.now()
     try {
       const genAI = getClient()
+      const definition = getModelDefinition('gemini', request.config.model)
       const generationConfig: {
         temperature?: number
         maxOutputTokens?: number
         responseMimeType?: string
+        // Thinking config is supported by Gemini 2.5+ reasoning models.
+        thinkingConfig?: { thinkingBudget: number }
       } = {}
 
       if (typeof request.config.temperature === 'number') {
@@ -33,6 +53,13 @@ export const geminiProvider: VisionModelProvider = {
         generationConfig.responseMimeType = 'application/json'
       }
 
+      if (definition?.capabilities.reasoning) {
+        const budget = thinkingBudgetFor(request.config.reasoningLevel)
+        if (budget !== undefined) {
+          generationConfig.thinkingConfig = { thinkingBudget: budget }
+        }
+      }
+
       const model = genAI.getGenerativeModel({
         model: request.config.model,
         systemInstruction: request.config.prompt,
@@ -42,9 +69,7 @@ export const geminiProvider: VisionModelProvider = {
       const result = await model.generateContent([
         {
           inlineData: {
-            data: request.config.imageQuality === 'low'
-              ? request.imageBase64
-              : request.imageBase64,
+            data: request.imageBase64,
             mimeType: request.mimeType,
           },
         },

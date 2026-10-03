@@ -26,7 +26,10 @@ export async function proxy(req: NextRequest) {
     }
     const url = req.nextUrl.clone()
     url.pathname = '/admin/login'
-    url.searchParams.set('next', pathname)
+    // Only forward local /admin paths (never absolute or protocol-relative URLs).
+    if (pathname.startsWith('/admin') && !pathname.startsWith('//')) {
+      url.searchParams.set('next', pathname)
+    }
     return NextResponse.redirect(url)
   }
 

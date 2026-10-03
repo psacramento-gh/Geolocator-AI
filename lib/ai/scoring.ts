@@ -22,18 +22,29 @@ export type GroundTruth = {
   city?: string | null
 }
 
-function guessMatchesCity(guess: GeoLocationGuess, gt: GroundTruth): boolean {
-  if (gt.city) {
-    if (guess.city && equalsField(guess.city, gt.city)) return true
-    if (norm(guess.location).includes(norm(gt.city))) return true
-    return false
-  }
-  if (gt.region) {
-    if (guess.region && equalsField(guess.region, gt.region)) return true
-    if (norm(guess.location).includes(norm(gt.region))) return true
-    return false
-  }
-  return Boolean(equalsField(guess.country, gt.country))
+function countryMatches(guess: GeoLocationGuess, gt: GroundTruth): boolean {
+  if (equalsField(guess.country, gt.country)) return true
+  return norm(guess.location).includes(norm(gt.country))
+}
+
+function regionMatches(guess: GeoLocationGuess, gt: GroundTruth): boolean {
+  if (!gt.region) return true
+  if (equalsField(guess.region, gt.region)) return true
+  return norm(guess.location).includes(norm(gt.region))
+}
+
+function cityMatches(guess: GeoLocationGuess, gt: GroundTruth): boolean {
+  if (!gt.city) return true
+  if (equalsField(guess.city, gt.city)) return true
+  return norm(guess.location).includes(norm(gt.city))
+}
+
+/** A guess matches ground truth only when country (and region/city when present) all agree. */
+function guessMatchesLocation(guess: GeoLocationGuess, gt: GroundTruth): boolean {
+  if (!countryMatches(guess, gt)) return false
+  if (!regionMatches(guess, gt)) return false
+  if (!cityMatches(guess, gt)) return false
+  return true
 }
 
 export function scoreAgainstGroundTruth(
@@ -50,21 +61,11 @@ export function scoreAgainstGroundTruth(
   }
 
   const top = output.locations[0]
-  const countryCorrect = equalsField(top.country, gt.country) ?? false
-  const regionCorrect = gt.region
-    ? Boolean(
-        equalsField(top.region, gt.region) ||
-          norm(top.location).includes(norm(gt.region))
-      )
-    : null
-  const cityCorrect = gt.city
-    ? Boolean(
-        equalsField(top.city, gt.city) ||
-          norm(top.location).includes(norm(gt.city))
-      )
-    : null
+  const countryCorrect = countryMatches(top, gt)
+  const regionCorrect = gt.region ? regionMatches(top, gt) && countryCorrect : null
+  const cityCorrect = gt.city ? cityMatches(top, gt) && countryCorrect && regionMatches(top, gt) : null
 
-  const top3Correct = output.locations.slice(0, 3).some((g) => guessMatchesCity(g, gt))
+  const top3Correct = output.locations.slice(0, 3).some((g) => guessMatchesLocation(g, gt))
 
   return { countryCorrect, regionCorrect, cityCorrect, top3Correct }
 }

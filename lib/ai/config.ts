@@ -10,6 +10,8 @@ import type {
   ResponseFormat,
 } from './types'
 
+export const PRODUCTION_SLOT = 'production'
+
 export function rowToConfig(row: ModelConfigRow): NormalizedModelConfig {
   return {
     id: row.id,
@@ -25,35 +27,67 @@ export function rowToConfig(row: ModelConfigRow): NormalizedModelConfig {
   }
 }
 
-export async function ensureProductionConfig(): Promise<NormalizedModelConfig> {
+async function selectProductionRow(): Promise<ModelConfigRow | undefined> {
   const db = getDb()
-  const existing = await db
+  const bySlot = await db
+    .select()
+    .from(modelConfigs)
+    .where(eq(modelConfigs.productionSlot, PRODUCTION_SLOT))
+    .limit(1)
+  if (bySlot[0]) return bySlot[0]
+
+  const byFlag = await db
     .select()
     .from(modelConfigs)
     .where(eq(modelConfigs.isProduction, true))
     .limit(1)
+  return byFlag[0]
+}
 
-  if (existing[0]) {
-    return rowToConfig(existing[0])
+export async function ensureProductionConfig(): Promise<NormalizedModelConfig> {
+  const existing = await selectProductionRow()
+  if (existing) {
+    // Backfill singleton slot if an older row only has isProduction.
+    if (!existing.productionSlot) {
+      const db = getDb()
+      await db
+        .update(modelConfigs)
+        .set({ productionSlot: PRODUCTION_SLOT, isProduction: true, updatedAt: new Date() })
+        .where(eq(modelConfigs.id, existing.id))
+    }
+    return rowToConfig(existing)
   }
 
-  const [created] = await db
-    .insert(modelConfigs)
-    .values({
-      name: 'Production',
-      provider: 'gemini',
-      model: 'gemini-3.1-flash-lite-preview',
-      prompt: DEFAULT_GEOLOCATION_PROMPT,
-      temperature: 0.2,
-      maxOutputTokens: 1200,
-      reasoningLevel: 'medium',
-      imageQuality: 'high',
-      responseFormat: 'structured_json',
-      isProduction: true,
-    })
-    .returning()
+  const db = getDb()
+  try {
+    const [created] = await db
+      .insert(modelConfigs)
+      .values({
+        name: 'Production',
+        provider: 'gemini',
+        model: 'gemini-3.1-flash-lite-preview',
+        prompt: DEFAULT_GEOLOCATION_PROMPT,
+        temperature: 0.2,
+        maxOutputTokens: 1200,
+        reasoningLevel: 'medium',
+        imageQuality: 'high',
+        responseFormat: 'structured_json',
+        isProduction: true,
+        productionSlot: PRODUCTION_SLOT,
+      })
+      .onConflictDoNothing({ target: modelConfigs.productionSlot })
+      .returning()
 
-  return rowToConfig(created)
+    if (created) return rowToConfig(created)
+  } catch {
+    // Unique race: another request inserted first — fall through to re-select.
+  }
+
+  const afterRace = await selectProductionRow()
+  if (!afterRace) {
+    throw new Error('Failed to create or load production model config')
+  }
+  return rowToConfig(afterRace)
 }
 
 export async function getProductionModelConfig(): Promise<NormalizedModelConfig> {
@@ -76,17 +110,13 @@ export async function saveProductionModelConfig(
   update: ProductionConfigUpdate
 ): Promise<NormalizedModelConfig> {
   const db = getDb()
-  const current = await db
-    .select()
-    .from(modelConfigs)
-    .where(eq(modelConfigs.isProduction, true))
-    .limit(1)
+  const current = await selectProductionRow()
 
-  if (current[0]) {
+  if (current) {
     const [updated] = await db
       .update(modelConfigs)
       .set({
-        name: update.name ?? current[0].name,
+        name: update.name ?? current.name,
         provider: update.provider,
         model: update.model,
         prompt: update.prompt,
@@ -96,14 +126,16 @@ export async function saveProductionModelConfig(
         imageQuality: update.imageQuality,
         responseFormat: update.responseFormat,
         isProduction: true,
+        productionSlot: PRODUCTION_SLOT,
         updatedAt: new Date(),
       })
-      .where(eq(modelConfigs.id, current[0].id))
+      .where(eq(modelConfigs.id, current.id))
       .returning()
     return rowToConfig(updated)
   }
 
-  const [created] = await db
+  // Atomic upsert on the singleton production slot.
+  const [upserted] = await db
     .insert(modelConfigs)
     .values({
       name: update.name ?? 'Production',
@@ -116,8 +148,25 @@ export async function saveProductionModelConfig(
       imageQuality: update.imageQuality,
       responseFormat: update.responseFormat,
       isProduction: true,
+      productionSlot: PRODUCTION_SLOT,
+    })
+    .onConflictDoUpdate({
+      target: modelConfigs.productionSlot,
+      set: {
+        name: update.name ?? 'Production',
+        provider: update.provider,
+        model: update.model,
+        prompt: update.prompt,
+        temperature: update.temperature,
+        maxOutputTokens: update.maxOutputTokens,
+        reasoningLevel: update.reasoningLevel,
+        imageQuality: update.imageQuality,
+        responseFormat: update.responseFormat,
+        isProduction: true,
+        updatedAt: new Date(),
+      },
     })
     .returning()
 
-  return rowToConfig(created)
+  return rowToConfig(upserted)
 }
