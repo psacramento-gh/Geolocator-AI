@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react'
 import { Upload, ImageIcon, X, Link, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { compressImageBlob } from '@/lib/compress-image'
 import { cn } from '@/lib/utils'
 
 interface PhotoUploadProps {
@@ -15,44 +16,6 @@ interface PhotoUploadProps {
 
 type Tab = 'file' | 'url'
 
-async function processImageBlob(blob: Blob): Promise<{ base64: string; mimeType: string; previewUrl: string }> {
-  const src = URL.createObjectURL(blob)
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => {
-      const MAX = 1024
-      let w = img.naturalWidth
-      let h = img.naturalHeight
-      if (w > MAX || h > MAX) {
-        if (w > h) { h = Math.round((h * MAX) / w); w = MAX }
-        else       { w = Math.round((w * MAX) / h); h = MAX }
-      }
-      const canvas = document.createElement('canvas')
-      canvas.width = w
-      canvas.height = h
-      canvas.getContext('2d')!.drawImage(img, 0, 0, w, h)
-      URL.revokeObjectURL(src)
-      canvas.toBlob(
-        (compressed) => {
-          if (!compressed) { reject(new Error('Canvas toBlob failed')); return }
-          const reader = new FileReader()
-          reader.onload = (e) => {
-            const dataUrl = e.target?.result as string
-            const [meta, base64] = dataUrl.split(',')
-            const mimeType = meta.replace('data:', '').replace(';base64', '')
-            resolve({ base64, mimeType, previewUrl: dataUrl })
-          }
-          reader.readAsDataURL(compressed)
-        },
-        'image/jpeg',
-        0.82
-      )
-    }
-    img.onerror = () => { URL.revokeObjectURL(src); reject(new Error('Image failed to load')) }
-    img.src = src
-  })
-}
-
 export function PhotoUpload({ onImageReady, onClear, preview, disabled }: PhotoUploadProps) {
   const [dragging, setDragging] = useState(false)
   const [tab, setTab] = useState<Tab>('file')
@@ -63,8 +26,8 @@ export function PhotoUpload({ onImageReady, onClear, preview, disabled }: PhotoU
   const processFile = useCallback(
     async (file: File) => {
       if (!file.type.startsWith('image/')) return
-      const { base64, mimeType, previewUrl } = await processImageBlob(file)
-      onImageReady(base64, mimeType, previewUrl)
+      const { base64, mimeType, preview } = await compressImageBlob(file)
+      onImageReady(base64, mimeType, preview)
     },
     [onImageReady]
   )
@@ -120,8 +83,8 @@ export function PhotoUpload({ onImageReady, onClear, preview, disabled }: PhotoU
         return
       }
       const blob = await response.blob()
-      const { base64, mimeType, previewUrl } = await processImageBlob(blob)
-      onImageReady(base64, mimeType, previewUrl)
+      const { base64, mimeType, preview } = await compressImageBlob(blob)
+      onImageReady(base64, mimeType, preview)
     } catch (err) {
       if (err instanceof TypeError) {
         // Network/CORS errors surface as TypeError in fetch
