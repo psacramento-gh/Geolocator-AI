@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   getProductionModelConfig,
   saveProductionModelConfig,
-  getModelDefinition,
+  resolveCapabilities,
+  discoverModels,
   listProviders,
-  getModelsByProvider,
-  providerLabel,
   type ProviderId,
   type ReasoningLevel,
   type ImageQuality,
@@ -18,26 +17,32 @@ export async function GET() {
   if (denied) return denied
 
   try {
-    const config = await getProductionModelConfig()
-    const definition = getModelDefinition(config.provider, config.model)
+    const [config, discovered] = await Promise.all([
+      getProductionModelConfig(),
+      discoverModels(),
+    ])
+    const capabilities = resolveCapabilities(config.provider, config.model)
+    const providerOrder = listProviders()
+
     return NextResponse.json({
       config,
-      capabilities: definition?.capabilities ?? {
-        temperature: true,
-        maxOutputTokens: true,
-        reasoning: false,
-        imageQuality: false,
-        structuredOutput: true,
-      },
-      providers: listProviders().map((id) => ({
-        id,
-        label: providerLabel(id),
-        models: getModelsByProvider(id).map((m) => ({
-          id: m.id,
-          label: m.label,
-          capabilities: m.capabilities,
-        })),
-      })),
+      capabilities,
+      providers: providerOrder.map((id) => {
+        const status = discovered.providers.find((p) => p.id === id)
+        return {
+          id,
+          label: status?.label || id,
+          source: status?.source,
+          error: status?.error,
+          models: discovered.models
+            .filter((m) => m.provider === id)
+            .map((m) => ({
+              id: m.id,
+              label: m.label,
+              capabilities: m.capabilities,
+            })),
+        }
+      }),
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to load production config'

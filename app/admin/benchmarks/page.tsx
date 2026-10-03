@@ -8,6 +8,12 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import {
+  ModelComparePicker,
+  modelKey,
+  type ProviderGroup,
+} from '@/components/admin/ModelComparePicker'
+import { DEFAULT_COMPARE_MODEL_IDS } from '@/lib/ai/registry'
 import type { ModelDefinition, ProviderId, GeoLocationResult } from '@/lib/ai/types'
 
 type BenchmarkCase = {
@@ -74,6 +80,7 @@ function mark(v: boolean | null) {
 export default function BenchmarksPage() {
   const [cases, setCases] = useState<BenchmarkCase[]>([])
   const [models, setModels] = useState<ModelDefinition[]>([])
+  const [providers, setProviders] = useState<ProviderGroup[]>([])
   const [selectedCases, setSelectedCases] = useState<Record<string, boolean>>({})
   const [selectedModels, setSelectedModels] = useState<Record<string, boolean>>({})
   const [summary, setSummary] = useState<SummaryRow[]>([])
@@ -110,11 +117,16 @@ export default function BenchmarksPage() {
       fetch('/api/admin/models').then(async (res) => {
         const json = await res.json()
         if (!res.ok) throw new Error(json.error || 'Failed to load models')
-        setModels(json.models)
+        const loaded = json.models as ModelDefinition[]
+        setModels(loaded)
+        setProviders((json.providers || []) as ProviderGroup[])
+        const defaults = new Set<string>([
+          DEFAULT_COMPARE_MODEL_IDS[0],
+          DEFAULT_COMPARE_MODEL_IDS[1],
+        ])
         const sel: Record<string, boolean> = {}
-        for (const m of json.models as ModelDefinition[]) {
-          sel[`${m.provider}:${m.id}`] =
-            m.id === 'gemini-3.1-flash-lite-preview' || m.id === 'gpt-4o-mini'
+        for (const m of loaded) {
+          sel[modelKey(m.provider, m.id)] = defaults.has(m.id)
         }
         setSelectedModels(sel)
       }),
@@ -129,7 +141,7 @@ export default function BenchmarksPage() {
   const modelSelections = useMemo(
     () =>
       models
-        .filter((m) => selectedModels[`${m.provider}:${m.id}`])
+        .filter((m) => selectedModels[modelKey(m.provider, m.id)])
         .map((m) => ({ provider: m.provider as ProviderId, model: m.id })),
     [models, selectedModels]
   )
@@ -337,23 +349,13 @@ export default function BenchmarksPage() {
           <CardTitle className="text-base">Run benchmark</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {models.map((m) => {
-              const key = `${m.provider}:${m.id}`
-              return (
-                <label key={key} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(selectedModels[key])}
-                    onChange={(e) =>
-                      setSelectedModels((prev) => ({ ...prev, [key]: e.target.checked }))
-                    }
-                  />
-                  {m.label}
-                </label>
-              )
-            })}
-          </div>
+          <ModelComparePicker
+            label="Models"
+            models={models}
+            providers={providers}
+            selected={selectedModels}
+            onChange={setSelectedModels}
+          />
           <Button
             onClick={onRun}
             disabled={running || selectedCaseIds.length === 0 || modelSelections.length === 0}

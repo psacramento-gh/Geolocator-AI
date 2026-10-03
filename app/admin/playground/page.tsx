@@ -8,6 +8,12 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import {
+  ModelComparePicker,
+  modelKey,
+  type ProviderGroup,
+} from '@/components/admin/ModelComparePicker'
+import { DEFAULT_COMPARE_MODEL_IDS } from '@/lib/ai/registry'
 import type { GeoLocationResult, ModelDefinition, ProviderId } from '@/lib/ai/types'
 
 type PlayResult = {
@@ -40,6 +46,7 @@ function fileToBase64(file: File): Promise<{ base64: string; mimeType: string; p
 
 export default function PlaygroundPage() {
   const [models, setModels] = useState<ModelDefinition[]>([])
+  const [providers, setProviders] = useState<ProviderGroup[]>([])
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [preview, setPreview] = useState<string | null>(null)
   const [imageBase64, setImageBase64] = useState('')
@@ -59,15 +66,18 @@ export default function PlaygroundPage() {
       .then(async (res) => {
         const json = await res.json()
         if (!res.ok) throw new Error(json.error || 'Failed to load models')
-        setModels(json.models)
+        const loaded = json.models as ModelDefinition[]
+        setModels(loaded)
+        setProviders((json.providers || []) as ProviderGroup[])
         setPrompt(json.defaultPrompt || '')
         setTemperature(json.defaultSettings?.temperature ?? 0.2)
         setMaxOutputTokens(json.defaultSettings?.maxOutputTokens ?? 1200)
         setReasoningLevel(json.defaultSettings?.reasoningLevel ?? 'medium')
         setImageQuality(json.defaultSettings?.imageQuality ?? 'high')
+        const defaults = new Set<string>(DEFAULT_COMPARE_MODEL_IDS)
         const initial: Record<string, boolean> = {}
-        for (const m of json.models as ModelDefinition[]) {
-          initial[`${m.provider}:${m.id}`] = ['gemini-3.1-flash-lite-preview', 'gpt-4o-mini', 'qwen-vl-plus'].includes(m.id)
+        for (const m of loaded) {
+          initial[modelKey(m.provider, m.id)] = defaults.has(m.id)
         }
         setSelected(initial)
       })
@@ -77,7 +87,7 @@ export default function PlaygroundPage() {
   const selectedModels = useMemo(
     () =>
       models
-        .filter((m) => selected[`${m.provider}:${m.id}`])
+        .filter((m) => selected[modelKey(m.provider, m.id)])
         .map((m) => ({ provider: m.provider, model: m.id })),
     [models, selected]
   )
@@ -157,29 +167,12 @@ export default function PlaygroundPage() {
             ) : null}
           </div>
 
-          <div className="space-y-2">
-            <Label>Compare models</Label>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {models.map((m) => {
-                const key = `${m.provider}:${m.id}`
-                return (
-                  <label key={key} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(selected[key])}
-                      onChange={(e) =>
-                        setSelected((prev) => ({ ...prev, [key]: e.target.checked }))
-                      }
-                    />
-                    <span>
-                      {m.label}
-                      <span className="ml-1 text-xs text-muted-foreground">({m.provider})</span>
-                    </span>
-                  </label>
-                )
-              })}
-            </div>
-          </div>
+          <ModelComparePicker
+            models={models}
+            providers={providers}
+            selected={selected}
+            onChange={setSelected}
+          />
 
           <details className="rounded-md border p-3">
             <summary className="cursor-pointer text-sm font-medium">Shared inference settings</summary>

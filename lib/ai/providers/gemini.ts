@@ -2,8 +2,8 @@ import { classifyProviderError } from '../errors'
 import { normalizeGeoLocationResult } from '../normalize'
 import type { ModelExecutionResult, ModelRequest, ReasoningLevel, VisionModelProvider } from '../types'
 import { ProviderError } from '../types'
+import { resolveCapabilities } from '../capabilities'
 import { getGeminiClient } from './gemini-client'
-import { getModelDefinition } from '../registry'
 
 function getClient() {
   try {
@@ -34,7 +34,7 @@ export const geminiProvider: VisionModelProvider = {
     const started = Date.now()
     try {
       const genAI = getClient()
-      const definition = getModelDefinition('gemini', request.config.model)
+      const capabilities = resolveCapabilities('gemini', request.config.model)
       const generationConfig: {
         temperature?: number
         maxOutputTokens?: number
@@ -53,7 +53,7 @@ export const geminiProvider: VisionModelProvider = {
         generationConfig.responseMimeType = 'application/json'
       }
 
-      if (definition?.capabilities.reasoning) {
+      if (capabilities.reasoning) {
         const budget = thinkingBudgetFor(request.config.reasoningLevel)
         if (budget !== undefined) {
           generationConfig.thinkingConfig = { thinkingBudget: budget }

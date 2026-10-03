@@ -119,6 +119,13 @@ export function getModelDefinition(provider: ProviderId, model: string): ModelDe
   return MODEL_REGISTRY.find((m) => m.provider === provider && m.id === model)
 }
 
+/** Default models pre-selected in playground / benchmarks when available. */
+export const DEFAULT_COMPARE_MODEL_IDS = [
+  'gemini-3.1-flash-lite-preview',
+  'gpt-4o-mini',
+  'qwen-vl-plus',
+] as const
+
 export function listProviders(): ProviderId[] {
   return ['gemini', 'openai', 'qwen']
 }

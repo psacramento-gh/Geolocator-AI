@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
+import { resolveCapabilities } from '../capabilities'
 import { classifyProviderError } from '../errors'
 import { normalizeGeoLocationResult } from '../normalize'
-import { getModelDefinition } from '../registry'
 import type { ModelExecutionResult, ModelRequest, ReasoningLevel, VisionModelProvider } from '../types'
 import { ProviderError } from '../types'
 
@@ -34,7 +34,7 @@ export const qwenProvider: VisionModelProvider = {
     try {
       const client = getClient()
       const dataUrl = `data:${request.mimeType};base64,${request.imageBase64}`
-      const definition = getModelDefinition('qwen', request.config.model)
+      const capabilities = resolveCapabilities('qwen', request.config.model)
 
       const params: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming & {
         extra_body?: Record<string, unknown>
@@ -64,7 +64,7 @@ export const qwenProvider: VisionModelProvider = {
             : undefined,
       }
 
-      if (definition?.capabilities.reasoning) {
+      if (capabilities.reasoning) {
         const extra = thinkingExtra(request.config.reasoningLevel)
         if (extra) params.extra_body = extra
       }

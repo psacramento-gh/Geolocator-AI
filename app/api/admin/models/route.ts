@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { MODEL_REGISTRY, listProviders, providerLabel, getProductionModelConfig } from '@/lib/ai'
+import { discoverModels, getProductionModelConfig } from '@/lib/ai'
 import { requireAdminApi } from '@/lib/auth/admin'
 
 export async function GET() {
@@ -7,10 +7,13 @@ export async function GET() {
   if (denied) return denied
 
   try {
-    const production = await getProductionModelConfig()
+    const [production, discovered] = await Promise.all([
+      getProductionModelConfig(),
+      discoverModels(),
+    ])
     return NextResponse.json({
-      models: MODEL_REGISTRY,
-      providers: listProviders().map((id) => ({ id, label: providerLabel(id) })),
+      models: discovered.models,
+      providers: discovered.providers,
       defaultPrompt: production.prompt,
       defaultSettings: {
         temperature: production.temperature,
