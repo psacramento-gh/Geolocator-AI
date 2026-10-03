@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { generateObject } from 'ai'
+import { generateObject, generateText, NoObjectGeneratedError } from 'ai'
 import { randomUUID } from 'crypto'
 import { getReadyDb } from '@/lib/db'
 import { modelUsage } from '@/lib/db/schema'
@@ -13,21 +13,24 @@ import type {
   ImageQuality,
   NormalizedModelConfig,
   ReasoningLevel,
+  TokenUsage,
 } from './types'
 import { GatewayError } from './types'
 
-const confidenceSchema = z.enum(['Very High', 'High', 'Medium', 'Low', 'Very Low'])
-
-/** Nullish fields match the prompt contract (`null` when unknown) and OpenAI strict JSON schema. */
+/**
+ * Structured-output schema kept deliberately simple (no unions / anyOf).
+ * OpenAI strict JSON schema and several Gateway providers reject Zod unions.
+ * Loose string/number coercion is applied in normalizeGeoLocationResult.
+ */
 const geoLocationSchema = z.object({
   locations: z
     .array(
       z.object({
         city: z.string().nullish(),
         region: z.string().nullish(),
-        country: z.string(),
+        country: z.string().nullish(),
         location: z.string().nullish(),
-        confidence: z.union([confidenceSchema, z.number(), z.string()]).nullish(),
+        confidence: z.string().nullish(),
         latitude: z.number().nullish(),
         longitude: z.number().nullish(),
         clues: z
@@ -36,7 +39,6 @@ const geoLocationSchema = z.object({
             summary: z.string().nullish(),
           })
           .nullish(),
-        reasoning: z.string().nullish(),
       })
     )
     .min(1)
@@ -147,6 +149,18 @@ function mapImageQuality(quality: ImageQuality): 'low' | 'high' | 'auto' {
   return 'auto'
 }
 
+function usageFromSdk(usage: {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+}): TokenUsage {
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.totalTokens,
+  }
+}
+
 /**
  * Single GeoLocator AI entry point — all production, playground, and benchmark
  * inference goes through Vercel AI Gateway via this function.
@@ -228,31 +242,99 @@ export async function analyzeLocation(
         : {}),
     }
 
-    const result = await generateObject({
+    const messages = [
+      {
+        role: 'user' as const,
+        content: [
+          imagePart,
+          {
+            type: 'text' as const,
+            text: 'Analyze this photograph and return the JSON as instructed.',
+          },
+        ],
+      },
+    ]
+
+    const sharedCall = {
       model: modelId,
-      schema: geoLocationSchema,
-      schemaName: 'GeoLocationResult',
-      schemaDescription: 'Top location guesses for where a photograph was taken',
       system: options.config.prompt,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            imagePart,
-            {
-              type: 'text',
-              text: 'Analyze this photograph and return the JSON as instructed.',
-            },
-          ],
-        },
-      ],
+      messages,
       ...callSettings,
       providerOptions: providerOptions as Parameters<typeof generateObject>[0]['providerOptions'],
-    })
+    }
 
-    const output = normalizeGeoLocationResult(result.object, modelId)
-    const gatewayProvider = extractGatewayProvider(result.providerMetadata, modelId)
-    const reportedCost = extractReportedCost(result.providerMetadata)
+    let output
+    let usage: TokenUsage = {}
+    let gatewayProvider: string | undefined
+    let reportedCost: number | undefined
+    let rawResponse: unknown
+
+    try {
+      const result = await generateObject({
+        ...sharedCall,
+        schema: geoLocationSchema,
+        schemaName: 'GeoLocationResult',
+        schemaDescription: 'Top location guesses for where a photograph was taken',
+      })
+      output = normalizeGeoLocationResult(result.object, modelId)
+      usage = usageFromSdk(result.usage)
+      reportedCost = extractReportedCost(result.providerMetadata)
+      gatewayProvider = extractGatewayProvider(result.providerMetadata, modelId)
+      rawResponse = result
+    } catch (structuredErr) {
+      // Many vision models return almost-valid JSON that fails strict schema checks.
+      // Recover from the raw text when present, otherwise fall back to plain JSON generation.
+      if (NoObjectGeneratedError.isInstance(structuredErr) && structuredErr.text) {
+        try {
+          output = normalizeGeoLocationResult(structuredErr.text, modelId)
+          usage = usageFromSdk(structuredErr.usage || {})
+          gatewayProvider = splitModelId(modelId).provider
+          rawResponse = { recoveredFrom: 'NoObjectGeneratedError', text: structuredErr.text }
+        } catch {
+          // Continue to generateText fallback below.
+          output = undefined
+        }
+      }
+
+      if (!output) {
+        const classified = classifyGatewayError(structuredErr, modelId)
+        if (
+          classified.type === 'AUTH_ERROR' ||
+          classified.type === 'BUDGET_EXCEEDED' ||
+          classified.type === 'RATE_LIMITED' ||
+          classified.type === 'MODEL_UNAVAILABLE' ||
+          classified.type === 'INVALID_IMAGE'
+        ) {
+          throw structuredErr
+        }
+
+        const textResult = await generateText({
+          ...sharedCall,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                imagePart,
+                {
+                  type: 'text',
+                  text:
+                    'Analyze this photograph and return ONLY valid JSON matching the schema in the system prompt. Do not wrap in markdown.',
+                },
+              ],
+            },
+          ],
+        })
+        output = normalizeGeoLocationResult(textResult.text, modelId)
+        usage = {
+          ...usageFromSdk(textResult.usage),
+          reportedCost: extractReportedCost(textResult.providerMetadata),
+        }
+        reportedCost = usage.reportedCost
+        gatewayProvider = extractGatewayProvider(textResult.providerMetadata, modelId)
+        rawResponse = textResult
+      }
+    }
+
     const latencyMs = Date.now() - started
 
     const execution: GeoLocatorExecution = {
@@ -261,14 +343,12 @@ export async function analyzeLocation(
       gateway: { provider: gatewayProvider },
       result: output,
       usage: {
-        inputTokens: result.usage.inputTokens,
-        outputTokens: result.usage.outputTokens,
-        totalTokens: result.usage.totalTokens,
-        reportedCost,
+        ...usage,
+        reportedCost: reportedCost ?? usage.reportedCost,
       },
       latencyMs,
       appliedSettings,
-      ...(options.includeRaw ? { rawResponse: result } : {}),
+      ...(options.includeRaw ? { rawResponse } : {}),
     }
 
     await maybeLogUsage({

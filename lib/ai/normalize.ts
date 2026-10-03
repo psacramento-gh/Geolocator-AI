@@ -63,16 +63,18 @@ function normalizeGuess(raw: unknown): GeoLocationGuess | null {
 
   const city = asString(obj.city) ?? parsed.city
   const region = asString(obj.region) ?? parsed.region
-  const country = asString(obj.country) ?? parsed.country
+  const country = asString(obj.country) ?? parsed.country ?? 'Unknown'
 
   let clues = { numbered: [] as string[], summary: '' }
   if (obj.clues && typeof obj.clues === 'object') {
     const c = obj.clues as Record<string, unknown>
     const numbered = Array.isArray(c.numbered)
-      ? c.numbered.map((item, i) => {
-          const s = asString(item) || ''
-          return /^\d+\./.test(s) ? s : `${i + 1}. ${s}`
-        }).filter(Boolean)
+      ? c.numbered
+          .map((item, i) => {
+            const s = asString(item) || ''
+            return /^\d+\./.test(s) ? s : s ? `${i + 1}. ${s}` : ''
+          })
+          .filter(Boolean)
       : []
     clues = {
       numbered,

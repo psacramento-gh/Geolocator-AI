@@ -7,6 +7,7 @@ import {
   analyzeLocation,
   getProductionModelConfig,
   adminFacingError,
+  sanitizeErrorMessage,
   GatewayError,
   resolveCapabilities,
   splitModelId,
@@ -134,7 +135,14 @@ export async function POST(req: NextRequest) {
         } catch (err) {
           const pe = err instanceof GatewayError ? err : null
           const errorType = pe?.type || 'GATEWAY_ERROR'
-          const errorMessage = pe ? adminFacingError(pe.type) : 'Request failed'
+          const facing = pe ? adminFacingError(pe.type) : 'Request failed'
+          const detail =
+            pe?.message && pe.message !== facing
+              ? sanitizeErrorMessage(pe.message)
+              : undefined
+          const errorMessage = detail && !detail.toLowerCase().includes(facing.toLowerCase())
+            ? `${facing} (${detail.slice(0, 160)})`
+            : facing
 
           const [row] = await db
             .insert(playgroundResults)
