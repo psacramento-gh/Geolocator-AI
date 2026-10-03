@@ -14,16 +14,30 @@ import {
   type ProviderGroup,
 } from '@/components/admin/ModelComparePicker'
 import { DEFAULT_COMPARE_MODEL_IDS } from '@/lib/ai/registry'
-import type { GeoLocationResult, ModelDefinition, ProviderId } from '@/lib/ai/types'
+import type { GeoLocationResult, ModelDefinition } from '@/lib/ai/types'
 
 type PlayResult = {
   id: string
-  provider: ProviderId
-  model: string
+  modelId: string
+  provider?: string
+  model?: string
+  gatewayProvider?: string
   success: boolean
   output?: GeoLocationResult
-  usage?: { inputTokens?: number; outputTokens?: number; providerReportedCost?: number }
+  usage?: {
+    inputTokens?: number
+    outputTokens?: number
+    reportedCost?: number
+    providerReportedCost?: number
+  }
   latencyMs?: number
+  appliedSettings?: Record<string, unknown>
+  unsupportedSettings?: {
+    temperature?: boolean
+    maxOutputTokens?: boolean
+    reasoning?: boolean
+    imageQuality?: boolean
+  }
   errorType?: string
   errorMessage?: string
   qualityRating: string | null
@@ -77,7 +91,7 @@ export default function PlaygroundPage() {
         const defaults = new Set<string>(DEFAULT_COMPARE_MODEL_IDS)
         const initial: Record<string, boolean> = {}
         for (const m of loaded) {
-          initial[modelKey(m.provider, m.id)] = defaults.has(m.id)
+          initial[modelKey(m.id)] = defaults.has(m.id)
         }
         setSelected(initial)
       })
@@ -87,8 +101,8 @@ export default function PlaygroundPage() {
   const selectedModels = useMemo(
     () =>
       models
-        .filter((m) => selected[modelKey(m.provider, m.id)])
-        .map((m) => ({ provider: m.provider, model: m.id })),
+        .filter((m) => selected[modelKey(m.id)])
+        .map((m) => ({ modelId: m.id })),
     [models, selected]
   )
 
@@ -148,7 +162,8 @@ export default function PlaygroundPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Model Playground</h1>
         <p className="text-sm text-muted-foreground">
-          Send one image to multiple models with the same prompt and settings.
+          Send one image through Vercel AI Gateway to multiple models with the same prompt and
+          settings.
         </p>
       </div>
 
@@ -163,7 +178,11 @@ export default function PlaygroundPage() {
             />
             {preview ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={preview} alt="Playground upload" className="mt-2 max-h-64 rounded-md border object-contain" />
+              <img
+                src={preview}
+                alt="Playground upload"
+                className="mt-2 max-h-64 rounded-md border object-contain"
+              />
             ) : null}
           </div>
 
@@ -175,19 +194,33 @@ export default function PlaygroundPage() {
           />
 
           <details className="rounded-md border p-3">
-            <summary className="cursor-pointer text-sm font-medium">Shared inference settings</summary>
+            <summary className="cursor-pointer text-sm font-medium">
+              Shared inference settings
+            </summary>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Temperature</Label>
-                <Input type="number" step="0.1" value={temperature} onChange={(e) => setTemperature(Number(e.target.value))} />
+                <Input
+                  type="number"
+                  step="0.1"
+                  value={temperature}
+                  onChange={(e) => setTemperature(Number(e.target.value))}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Max tokens</Label>
-                <Input type="number" value={maxOutputTokens} onChange={(e) => setMaxOutputTokens(Number(e.target.value))} />
+                <Input
+                  type="number"
+                  value={maxOutputTokens}
+                  onChange={(e) => setMaxOutputTokens(Number(e.target.value))}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Reasoning</Label>
-                <Select value={reasoningLevel} onChange={(e) => setReasoningLevel(e.target.value)}>
+                <Select
+                  value={reasoningLevel}
+                  onChange={(e) => setReasoningLevel(e.target.value)}
+                >
                   <option value="none">None</option>
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
@@ -204,7 +237,12 @@ export default function PlaygroundPage() {
               </div>
               <div className="space-y-2 sm:col-span-2">
                 <Label>Prompt</Label>
-                <Textarea rows={8} className="font-mono text-xs" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+                <Textarea
+                  rows={8}
+                  className="font-mono text-xs"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                />
               </div>
             </div>
           </details>
@@ -215,7 +253,7 @@ export default function PlaygroundPage() {
             onClick={runComparison}
             disabled={running || !imageBase64 || selectedModels.length < 2}
           >
-            {running ? 'Running…' : 'Run comparison'}
+            {running ? 'Running…' : 'Compare'}
           </Button>
         </CardContent>
       </Card>
@@ -225,21 +263,41 @@ export default function PlaygroundPage() {
           {results.map((r) => (
             <Card key={r.id}>
               <CardHeader className="space-y-1">
-                <CardTitle className="text-base">
-                  {r.provider} / {r.model}
-                </CardTitle>
+                <CardTitle className="text-base">{r.modelId || `${r.provider}/${r.model}`}</CardTitle>
+                {r.gatewayProvider ? (
+                  <p className="text-xs text-muted-foreground">
+                    Inference provider: {r.gatewayProvider}
+                  </p>
+                ) : null}
                 {!r.success ? (
                   <Badge variant="danger">{r.errorMessage || r.errorType || 'Failed'}</Badge>
                 ) : null}
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
+                {r.unsupportedSettings ? (
+                  <div className="rounded border border-dashed p-2 text-xs text-muted-foreground">
+                    {[
+                      r.unsupportedSettings.reasoning ? 'reasoning: unsupported' : null,
+                      r.unsupportedSettings.temperature ? 'temperature: unsupported' : null,
+                      r.unsupportedSettings.imageQuality ? 'image quality: unsupported' : null,
+                      r.unsupportedSettings.maxOutputTokens
+                        ? 'max output tokens: unsupported'
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || 'All shared settings applied'}
+                  </div>
+                ) : null}
+
                 {r.success && r.output ? (
                   <>
                     <div className="space-y-2">
                       {r.output.locations.map((loc, i) => (
                         <div key={i} className="rounded border p-2">
                           <div className="flex justify-between gap-2">
-                            <span className="font-medium">#{i + 1} {loc.location}</span>
+                            <span className="font-medium">
+                              #{i + 1} {loc.location}
+                            </span>
                             <span className="text-xs text-muted-foreground">{loc.confidence}</span>
                           </div>
                           <p className="mt-1 text-xs text-muted-foreground">{loc.clues.summary}</p>
@@ -251,9 +309,9 @@ export default function PlaygroundPage() {
                       <span>In {r.usage?.inputTokens ?? '—'}</span>
                       <span>Out {r.usage?.outputTokens ?? '—'}</span>
                       <span>
-                        Cost{' '}
-                        {r.usage?.providerReportedCost != null
-                          ? `$${r.usage.providerReportedCost.toFixed(4)}`
+                        Reported cost{' '}
+                        {(r.usage?.reportedCost ?? r.usage?.providerReportedCost) != null
+                          ? `$${(r.usage?.reportedCost ?? r.usage?.providerReportedCost)!.toFixed(4)}`
                           : '—'}
                       </span>
                     </div>

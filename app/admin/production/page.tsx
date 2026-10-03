@@ -7,18 +7,17 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import type { ModelCapabilities, ProviderId } from '@/lib/ai/types'
+import type { ModelCapabilities } from '@/lib/ai/types'
 
-type ProviderOption = {
-  id: ProviderId
+type ModelOption = {
+  id: string
   label: string
-  models: Array<{ id: string; label: string; capabilities: ModelCapabilities }>
+  capabilities: ModelCapabilities
 }
 
 type ProductionPayload = {
   config: {
-    provider: ProviderId
-    model: string
+    modelId: string
     prompt: string
     temperature: number
     maxOutputTokens: number
@@ -27,20 +26,20 @@ type ProductionPayload = {
     responseFormat: string
   }
   capabilities: ModelCapabilities
-  providers: ProviderOption[]
+  models: ModelOption[]
+  discovery?: { source: string; error?: string }
 }
 
 export default function ProductionAdminPage() {
-  const [providers, setProviders] = useState<ProviderOption[]>([])
-  const [provider, setProvider] = useState<ProviderId>('gemini')
-  const [model, setModel] = useState('')
+  const [models, setModels] = useState<ModelOption[]>([])
+  const [modelId, setModelId] = useState('')
   const [prompt, setPrompt] = useState('')
   const [temperature, setTemperature] = useState(0.2)
   const [maxOutputTokens, setMaxOutputTokens] = useState(1200)
   const [reasoningLevel, setReasoningLevel] = useState('medium')
   const [imageQuality, setImageQuality] = useState('high')
-  const [responseFormat, setResponseFormat] = useState('structured_json')
   const [capabilities, setCapabilities] = useState<ModelCapabilities | null>(null)
+  const [discoveryNote, setDiscoveryNote] = useState('')
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -51,34 +50,40 @@ export default function ProductionAdminPage() {
       .then(async (res) => {
         const json: ProductionPayload = await res.json()
         if (!res.ok) throw new Error((json as { error?: string }).error || 'Failed to load')
-        setProviders(json.providers)
-        setProvider(json.config.provider)
-        setModel(json.config.model)
+        setModels(json.models || [])
+        setModelId(json.config.modelId)
         setPrompt(json.config.prompt)
         setTemperature(json.config.temperature)
         setMaxOutputTokens(json.config.maxOutputTokens)
         setReasoningLevel(json.config.reasoningLevel)
         setImageQuality(json.config.imageQuality)
-        setResponseFormat(json.config.responseFormat)
         setCapabilities(json.capabilities)
+        if (json.discovery?.source === 'fallback') {
+          setDiscoveryNote(
+            json.discovery.error
+              ? `Using curated model list (${json.discovery.error})`
+              : 'Using curated model list'
+          )
+        } else {
+          setDiscoveryNote('Models from AI Gateway')
+        }
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
   }, [])
 
-  const models = useMemo(
-    () => providers.find((p) => p.id === provider)?.models || [],
-    [providers, provider]
+  const selected = useMemo(
+    () => models.find((m) => m.id === modelId) || null,
+    [models, modelId]
   )
 
   useEffect(() => {
-    const def = models.find((m) => m.id === model)
-    if (def) setCapabilities(def.capabilities)
-    else if (models[0] && !models.some((m) => m.id === model)) {
-      setModel(models[0].id)
+    if (selected) setCapabilities(selected.capabilities)
+    else if (models[0] && !models.some((m) => m.id === modelId)) {
+      setModelId(models[0].id)
       setCapabilities(models[0].capabilities)
     }
-  }, [models, model])
+  }, [models, modelId, selected])
 
   async function onSave(e: FormEvent) {
     e.preventDefault()
@@ -90,14 +95,13 @@ export default function ProductionAdminPage() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          provider,
-          model,
+          modelId,
           prompt,
           temperature,
           maxOutputTokens,
           reasoningLevel,
           imageQuality,
-          responseFormat,
+          responseFormat: 'structured_json',
         }),
       })
       const json = await res.json()
@@ -117,8 +121,12 @@ export default function ProductionAdminPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Production AI</h1>
         <p className="text-sm text-muted-foreground">
-          Active configuration for live GeoLocator requests. Changes apply immediately.
+          Active configuration for live GeoLocator requests via Vercel AI Gateway. Changes apply
+          immediately.
         </p>
+        {discoveryNote ? (
+          <p className="mt-1 text-xs text-muted-foreground">{discoveryNote}</p>
+        ) : null}
       </div>
 
       <Card>
@@ -128,23 +136,11 @@ export default function ProductionAdminPage() {
         <CardContent>
           <form onSubmit={onSave} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Provider">
-                <Select
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value as ProviderId)}
-                >
-                  {providers.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
               <Field label="Model">
-                <Select value={model} onChange={(e) => setModel(e.target.value)}>
+                <Select value={modelId} onChange={(e) => setModelId(e.target.value)}>
                   {models.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.label}
+                      {m.label} ({m.id})
                     </option>
                   ))}
                 </Select>
@@ -159,6 +155,9 @@ export default function ProductionAdminPage() {
                   disabled={!capabilities?.temperature}
                   onChange={(e) => setTemperature(Number(e.target.value))}
                 />
+                {!capabilities?.temperature ? (
+                  <p className="text-xs text-muted-foreground">Unsupported for this model</p>
+                ) : null}
               </Field>
               <Field label="Max output tokens">
                 <Input
@@ -181,6 +180,9 @@ export default function ProductionAdminPage() {
                   <option value="medium">Medium</option>
                   <option value="high">High</option>
                 </Select>
+                {!capabilities?.reasoning ? (
+                  <p className="text-xs text-muted-foreground">Unsupported for this model</p>
+                ) : null}
               </Field>
               <Field label="Image quality">
                 <Select
@@ -192,20 +194,16 @@ export default function ProductionAdminPage() {
                   <option value="medium">Medium</option>
                   <option value="high">High</option>
                 </Select>
+                {!capabilities?.imageQuality ? (
+                  <p className="text-xs text-muted-foreground">Unsupported for this model</p>
+                ) : null}
               </Field>
               <Field label="Response format">
-                <Select
-                  value={responseFormat}
-                  disabled={!capabilities?.structuredOutput}
-                  onChange={(e) => setResponseFormat(e.target.value)}
-                >
-                  <option value="structured_json">Structured JSON</option>
-                  <option value="text">Text</option>
-                </Select>
+                <Input value="Structured JSON" disabled />
               </Field>
             </div>
 
-            <Field label="Prompt">
+            <Field label="System prompt">
               <Textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
@@ -218,7 +216,7 @@ export default function ProductionAdminPage() {
             {status ? <p className="text-sm text-emerald-600">{status}</p> : null}
 
             <Button type="submit" disabled={saving}>
-              {saving ? 'Saving…' : 'Save production configuration'}
+              {saving ? 'Saving…' : 'Save'}
             </Button>
           </form>
         </CardContent>

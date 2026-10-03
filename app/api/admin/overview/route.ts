@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { and, gte, sql } from 'drizzle-orm'
+import { and, eq, gte, sql } from 'drizzle-orm'
 import { getReadyDb } from '@/lib/db'
 import { modelUsage } from '@/lib/db/schema'
 import { requireAdminApi } from '@/lib/auth/admin'
@@ -25,6 +25,11 @@ export async function GET(req: NextRequest) {
     const since = rangeStart(range)
     const db = await getReadyDb()
 
+    const productionOnly = and(
+      gte(modelUsage.createdAt, since),
+      eq(modelUsage.mode, 'production')
+    )
+
     const [totals] = await db
       .select({
         total: sql<number>`count(*)::int`,
@@ -37,12 +42,14 @@ export async function GET(req: NextRequest) {
         outputTokens: sql<number>`coalesce(sum(${modelUsage.outputTokens}), 0)::int`,
       })
       .from(modelUsage)
-      .where(gte(modelUsage.createdAt, since))
+      .where(productionOnly)
 
     const byModel = await db
       .select({
+        modelId: sql<string>`coalesce(${modelUsage.modelId}, ${modelUsage.provider} || '/' || ${modelUsage.model})`,
         provider: modelUsage.provider,
         model: modelUsage.model,
+        gatewayProvider: modelUsage.gatewayProvider,
         requests: sql<number>`count(*)::int`,
         successful: sql<number>`count(*) filter (where ${modelUsage.success})::int`,
         failed: sql<number>`count(*) filter (where not ${modelUsage.success})::int`,
@@ -50,25 +57,32 @@ export async function GET(req: NextRequest) {
         avgLatency: sql<number>`coalesce(avg(${modelUsage.latencyMs}), 0)::float`,
       })
       .from(modelUsage)
-      .where(gte(modelUsage.createdAt, since))
-      .groupBy(modelUsage.provider, modelUsage.model)
+      .where(productionOnly)
+      .groupBy(
+        modelUsage.modelId,
+        modelUsage.provider,
+        modelUsage.model,
+        modelUsage.gatewayProvider
+      )
       .orderBy(sql`count(*) desc`)
 
     const errorsByModel = await db
       .select({
+        modelId: sql<string>`coalesce(${modelUsage.modelId}, ${modelUsage.provider} || '/' || ${modelUsage.model})`,
         provider: modelUsage.provider,
         model: modelUsage.model,
         errorType: modelUsage.errorType,
         count: sql<number>`count(*)::int`,
       })
       .from(modelUsage)
-      .where(and(gte(modelUsage.createdAt, since), sql`not ${modelUsage.success}`))
-      .groupBy(modelUsage.provider, modelUsage.model, modelUsage.errorType)
+      .where(and(productionOnly, sql`not ${modelUsage.success}`))
+      .groupBy(modelUsage.modelId, modelUsage.provider, modelUsage.model, modelUsage.errorType)
       .orderBy(sql`count(*) desc`)
 
     return NextResponse.json({
       range,
       since: since.toISOString(),
+      costSource: 'gateway_reported',
       totals: {
         totalRequests: totals?.total ?? 0,
         successful: totals?.successful ?? 0,
@@ -79,17 +93,13 @@ export async function GET(req: NextRequest) {
         inputTokens: totals?.inputTokens ?? 0,
         outputTokens: totals?.outputTokens ?? 0,
         errorRate:
-          totals?.total ? ((totals.failed ?? 0) / totals.total) * 100 : 0,
+          totals?.total && totals.total > 0 ? (totals.failed / totals.total) * 100 : 0,
       },
       byModel,
       errorsByModel,
     })
   } catch (err) {
-    const raw = err instanceof Error ? err.message : 'Failed to load overview'
-    // Only rewrite the explicit missing-relation case; keep other DB errors visible.
-    const message = /relation ["'].*["'] does not exist/i.test(raw)
-      ? 'Database tables are missing. Refresh once to auto-create them, or run npm run db:push.'
-      : raw
+    const message = err instanceof Error ? err.message : 'Failed to load overview'
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }

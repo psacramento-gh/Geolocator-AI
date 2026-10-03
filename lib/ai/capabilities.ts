@@ -1,8 +1,8 @@
-import { isOpenAiReasoningModel } from './openai-models'
-import { getModelDefinition } from './registry'
-import type { ModelCapabilities, ProviderId } from './types'
+import { getModelDefinition, splitModelId } from './registry'
+import type { ModelCapabilities } from './types'
 
 const DEFAULT_CAPABILITIES: ModelCapabilities = {
+  vision: true,
   temperature: true,
   maxOutputTokens: true,
   reasoning: false,
@@ -10,42 +10,44 @@ const DEFAULT_CAPABILITIES: ModelCapabilities = {
   structuredOutput: true,
 }
 
-/** Infer capabilities for a model id, preferring curated registry entries when present. */
+function isOpenAiReasoningModel(model: string): boolean {
+  const lower = model.toLowerCase()
+  return /^(o[1-9]|gpt-5)/.test(lower)
+}
+
+/** Infer capabilities for a Gateway model id, preferring curated registry entries. */
 export function resolveCapabilities(
-  provider: ProviderId,
   modelId: string,
   hints?: Partial<ModelCapabilities>
 ): ModelCapabilities {
-  const known = getModelDefinition(provider, modelId)
-  // Prefer curated registry capabilities for known models.
-  if (known) return known.capabilities
+  const known = getModelDefinition(modelId)
+  if (known) return { ...known.capabilities, ...hints }
+
+  const { provider, model } = splitModelId(modelId)
 
   switch (provider) {
-    case 'gemini':
+    case 'google':
       return {
         ...DEFAULT_CAPABILITIES,
-        reasoning:
-          hints?.reasoning ??
-          /pro|thinking|2\.5|3\./i.test(modelId),
+        reasoning: hints?.reasoning ?? /pro|thinking|2\.5|3\./i.test(model),
         ...hints,
       }
     case 'openai': {
-      const reasoning = hints?.reasoning ?? isOpenAiReasoningModel(modelId)
+      const reasoning = hints?.reasoning ?? isOpenAiReasoningModel(model)
       return {
+        vision: true,
         temperature: !reasoning,
         maxOutputTokens: true,
         reasoning,
         imageQuality: true,
-        structuredOutput: !reasoning,
+        structuredOutput: true,
         ...hints,
       }
     }
-    case 'qwen':
+    case 'alibaba':
       return {
         ...DEFAULT_CAPABILITIES,
-        reasoning:
-          hints?.reasoning ??
-          /thinking|qwen3/i.test(modelId),
+        reasoning: hints?.reasoning ?? /thinking|qwen3/i.test(model),
         ...hints,
       }
     default:
@@ -54,7 +56,8 @@ export function resolveCapabilities(
 }
 
 export function humanizeModelId(id: string): string {
-  return id
+  const short = id.includes('/') ? id.split('/').slice(1).join('/') : id
+  return short
     .replace(/^models\//, '')
     .split(/[-_]/)
     .filter(Boolean)

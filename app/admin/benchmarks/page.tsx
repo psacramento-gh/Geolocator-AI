@@ -14,7 +14,7 @@ import {
   type ProviderGroup,
 } from '@/components/admin/ModelComparePicker'
 import { DEFAULT_COMPARE_MODEL_IDS } from '@/lib/ai/registry'
-import type { ModelDefinition, ProviderId, GeoLocationResult } from '@/lib/ai/types'
+import type { ModelDefinition, GeoLocationResult } from '@/lib/ai/types'
 
 type BenchmarkCase = {
   id: string
@@ -29,6 +29,7 @@ type BenchmarkCase = {
 }
 
 type SummaryRow = {
+  modelId?: string
   provider: string
   model: string
   samples: number
@@ -44,8 +45,10 @@ type SummaryRow = {
 type ResultRow = {
   id: string
   benchmarkCaseId: string
+  modelId?: string | null
   provider: string
   model: string
+  gatewayProvider?: string | null
   normalizedOutput: GeoLocationResult | null
   countryCorrect: boolean | null
   regionCorrect: boolean | null
@@ -126,7 +129,7 @@ export default function BenchmarksPage() {
         ])
         const sel: Record<string, boolean> = {}
         for (const m of loaded) {
-          sel[modelKey(m.provider, m.id)] = defaults.has(m.id)
+          sel[modelKey(m.id)] = defaults.has(m.id)
         }
         setSelectedModels(sel)
       }),
@@ -141,8 +144,8 @@ export default function BenchmarksPage() {
   const modelSelections = useMemo(
     () =>
       models
-        .filter((m) => selectedModels[modelKey(m.provider, m.id)])
-        .map((m) => ({ provider: m.provider as ProviderId, model: m.id })),
+        .filter((m) => selectedModels[modelKey(m.id)])
+        .map((m) => ({ modelId: m.id })),
     [models, selectedModels]
   )
 
@@ -388,8 +391,8 @@ export default function BenchmarksPage() {
               </thead>
               <tbody>
                 {summary.map((row) => (
-                  <tr key={`${row.provider}:${row.model}`} className="border-b border-border/60">
-                    <td className="py-2 pr-3">{row.provider}/{row.model}</td>
+                  <tr key={row.modelId || `${row.provider}:${row.model}`} className="border-b border-border/60">
+                    <td className="py-2 pr-3">{row.modelId || `${row.provider}/${row.model}`}</td>
                     <td className="py-2 pr-3">{pct(row.countryAccuracy)}</td>
                     <td className="py-2 pr-3">{pct(row.regionAccuracy)}</td>
                     <td className="py-2 pr-3">{pct(row.cityAccuracy)}</td>
@@ -458,12 +461,17 @@ export default function BenchmarksPage() {
                   <div key={r.id} className="rounded border p-3 text-sm">
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                       <span className="font-medium">
-                        {r.provider} / {r.model}
+                        {r.modelId || `${r.provider}/${r.model}`}
                       </span>
                       <Badge variant={r.success ? 'success' : 'danger'}>
                         {r.success ? verdict : r.errorMessage || 'Failed'}
                       </Badge>
                     </div>
+                    {r.gatewayProvider ? (
+                      <p className="mb-2 text-xs text-muted-foreground">
+                        Inference provider: {r.gatewayProvider}
+                      </p>
+                    ) : null}
                     {locs.map((loc, i) => (
                       <div key={i} className="text-muted-foreground">
                         {i + 1}. {loc.location}
@@ -475,7 +483,7 @@ export default function BenchmarksPage() {
                       <span>City {mark(r.cityCorrect)}</span>
                       <span>Top3 {mark(r.top3Correct)}</span>
                       <span>{ms(r.latencyMs)}</span>
-                      <span>{money(r.providerCost)}</span>
+                      <span>Reported {money(r.providerCost)}</span>
                     </div>
                   </div>
                 )

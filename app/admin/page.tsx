@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 
 type OverviewData = {
   range: string
+  costSource?: string
   totals: {
     totalRequests: number
     successful: number
@@ -18,8 +19,10 @@ type OverviewData = {
     errorRate: number
   }
   byModel: Array<{
-    provider: string
-    model: string
+    modelId?: string
+    provider: string | null
+    model: string | null
+    gatewayProvider?: string | null
     requests: number
     successful: number
     failed: number
@@ -27,11 +30,16 @@ type OverviewData = {
     avgLatency: number
   }>
   errorsByModel: Array<{
-    provider: string
-    model: string
+    modelId?: string
+    provider: string | null
+    model: string | null
     errorType: string | null
     count: number
   }>
+}
+
+function modelLabel(row: { modelId?: string | null; provider?: string | null; model?: string | null }) {
+  return row.modelId || [row.provider, row.model].filter(Boolean).join('/') || 'unknown'
 }
 
 const RANGES = [
@@ -89,7 +97,9 @@ export default function AdminOverviewPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">AI Operations</h1>
-          <p className="text-sm text-muted-foreground">Production model usage and cost overview</p>
+          <p className="text-sm text-muted-foreground">
+            Production model usage and Gateway-reported cost overview
+          </p>
         </div>
         <div className="flex gap-1">
           {RANGES.map((r) => (
@@ -116,7 +126,7 @@ export default function AdminOverviewPage() {
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Stat title="Requests" value={String(data.totals.totalRequests)} />
-            <Stat title="Provider-reported cost" value={formatUsd(data.totals.totalProviderCost)} />
+            <Stat title="Reported AI cost" value={formatUsd(data.totals.totalProviderCost)} />
             <Stat title="Average latency" value={formatMs(data.totals.avgLatencyMs)} />
             <Stat title="Error rate" value={`${data.totals.errorRate.toFixed(1)}%`} />
           </div>
@@ -138,12 +148,11 @@ export default function AdminOverviewPage() {
               ) : (
                 data.byModel.map((row) => {
                   const pct = totalRequests ? (row.requests / totalRequests) * 100 : 0
+                  const label = modelLabel(row)
                   return (
-                    <div key={`${row.provider}:${row.model}`} className="space-y-1">
+                    <div key={label} className="space-y-1">
                       <div className="flex justify-between text-sm">
-                        <span>
-                          {row.provider} / {row.model}
-                        </span>
+                        <span>{label}</span>
                         <span className="text-muted-foreground">
                           {row.requests} ({pct.toFixed(0)}%)
                         </span>
@@ -155,9 +164,12 @@ export default function AdminOverviewPage() {
                         />
                       </div>
                       <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                        <span>Cost {formatUsd(row.totalCost)}</span>
+                        <span>Reported cost {formatUsd(row.totalCost)}</span>
                         <span>Avg latency {formatMs(row.avgLatency)}</span>
                         <span>Errors {row.failed}</span>
+                        {row.gatewayProvider ? (
+                          <span>Via {row.gatewayProvider}</span>
+                        ) : null}
                       </div>
                     </div>
                   )
@@ -184,10 +196,8 @@ export default function AdminOverviewPage() {
                   </thead>
                   <tbody>
                     {data.byModel.map((row) => (
-                      <tr key={`tbl-${row.provider}:${row.model}`} className="border-b border-border/60">
-                        <td className="py-2 pr-3">
-                          {row.provider}/{row.model}
-                        </td>
+                      <tr key={`tbl-${modelLabel(row)}`} className="border-b border-border/60">
+                        <td className="py-2 pr-3">{modelLabel(row)}</td>
                         <td className="py-2 pr-3">{row.requests}</td>
                         <td className="py-2 pr-3">{formatUsd(row.totalCost)}</td>
                         <td className="py-2 pr-3">{formatMs(row.avgLatency)}</td>
@@ -209,7 +219,7 @@ export default function AdminOverviewPage() {
                 {data.errorsByModel.map((row, i) => (
                   <div key={i} className="flex justify-between text-sm">
                     <span>
-                      {row.provider}/{row.model} — {row.errorType || 'UNKNOWN'}
+                      {modelLabel(row)} — {row.errorType || 'UNKNOWN'}
                     </span>
                     <span className="text-muted-foreground">{row.count}</span>
                   </div>

@@ -3,7 +3,7 @@ export type ConfidenceLabel = 'Very High' | 'High' | 'Medium' | 'Low' | 'Very Lo
 export type ReasoningLevel = 'none' | 'low' | 'medium' | 'high'
 export type ImageQuality = 'low' | 'medium' | 'high'
 export type ResponseFormat = 'structured_json' | 'text'
-export type ProviderId = 'gemini' | 'openai' | 'qwen'
+export type AnalysisMode = 'production' | 'playground' | 'benchmark'
 
 export type GeoLocationGuess = {
   city?: string
@@ -24,6 +24,7 @@ export type GeoLocationResult = {
 }
 
 export type ModelCapabilities = {
+  vision: boolean
   temperature: boolean
   maxOutputTokens: boolean
   reasoning: boolean
@@ -32,17 +33,18 @@ export type ModelCapabilities = {
 }
 
 export type ModelDefinition = {
+  /** Gateway model id in `provider/model` format. */
   id: string
-  provider: ProviderId
   label: string
+  enabled: boolean
   capabilities: ModelCapabilities
 }
 
 export type NormalizedModelConfig = {
   id?: string
   name?: string
-  provider: ProviderId
-  model: string
+  /** Gateway model id in `provider/model` format. */
+  modelId: string
   prompt: string
   temperature: number
   maxOutputTokens: number
@@ -51,48 +53,66 @@ export type NormalizedModelConfig = {
   responseFormat: ResponseFormat
 }
 
-export type ModelRequest = {
-  config: NormalizedModelConfig
-  imageBase64: string
-  mimeType: string
-}
-
 export type TokenUsage = {
   inputTokens?: number
   outputTokens?: number
   totalTokens?: number
-  providerReportedCost?: number
+  reportedCost?: number
 }
 
-export type ModelExecutionResult = {
-  provider: ProviderId
-  model: string
-  output: GeoLocationResult
+export type GeoLocatorExecution = {
+  requestId: string
+  modelId: string
+  gateway: {
+    provider?: string
+  }
+  result: GeoLocationResult
   usage: TokenUsage
   latencyMs: number
+  /** Settings that were applied vs omitted as unsupported. */
+  appliedSettings: {
+    temperature?: number | 'unsupported'
+    maxOutputTokens?: number | 'unsupported'
+    reasoningLevel?: ReasoningLevel | 'unsupported'
+    imageQuality?: ImageQuality | 'unsupported'
+  }
   rawResponse?: unknown
 }
 
-export type ProviderErrorType =
-  | 'AUTHENTICATION_ERROR'
-  | 'RATE_LIMIT'
+export type GatewayErrorType =
+  | 'RATE_LIMITED'
+  | 'BUDGET_EXCEEDED'
+  | 'MODEL_UNAVAILABLE'
   | 'TIMEOUT'
-  | 'INVALID_RESPONSE'
-  | 'PROVIDER_ERROR'
+  | 'INVALID_IMAGE'
+  | 'INVALID_MODEL_RESPONSE'
+  | 'AUTH_ERROR'
+  | 'GATEWAY_ERROR'
   | 'UNSUPPORTED_CONFIGURATION'
+  | 'UNKNOWN'
 
-export class ProviderError extends Error {
-  type: ProviderErrorType
-  provider: ProviderId
+/** @deprecated Use GatewayErrorType — kept for transitional imports. */
+export type ProviderErrorType = GatewayErrorType
 
-  constructor(type: ProviderErrorType, message: string, provider: ProviderId) {
+export class GatewayError extends Error {
+  type: GatewayErrorType
+  modelId?: string
+
+  constructor(type: GatewayErrorType, message: string, modelId?: string) {
     super(message)
-    this.name = 'ProviderError'
+    this.name = 'GatewayError'
     this.type = type
-    this.provider = provider
+    this.modelId = modelId
   }
 }
 
-export interface VisionModelProvider {
-  run(request: ModelRequest): Promise<ModelExecutionResult>
+/** @deprecated Use GatewayError */
+export class ProviderError extends GatewayError {
+  provider: string
+
+  constructor(type: GatewayErrorType, message: string, providerOrModelId?: string) {
+    super(type, message, providerOrModelId)
+    this.name = 'ProviderError'
+    this.provider = providerOrModelId || 'gateway'
+  }
 }

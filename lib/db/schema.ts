@@ -18,8 +18,12 @@ export const modelConfigs = pgTable(
   {
     id: uuid('id').defaultRandom().primaryKey(),
     name: varchar('name', { length: 128 }).notNull(),
-    provider: varchar('provider', { length: 64 }).notNull(),
-    model: varchar('model', { length: 128 }).notNull(),
+    /** @deprecated Prefer modelId. Kept for migration compatibility. */
+    provider: varchar('provider', { length: 64 }),
+    /** @deprecated Prefer modelId. Kept for migration compatibility. */
+    model: varchar('model', { length: 128 }),
+    /** Gateway model id in `provider/model` format. */
+    modelId: varchar('model_id', { length: 256 }),
     prompt: text('prompt').notNull(),
     temperature: real('temperature').notNull().default(0.2),
     maxOutputTokens: integer('max_output_tokens').notNull().default(1200),
@@ -43,8 +47,15 @@ export const modelConfigs = pgTable(
 export const modelUsage = pgTable('model_usage', {
   id: uuid('id').defaultRandom().primaryKey(),
   requestId: varchar('request_id', { length: 64 }).notNull(),
-  provider: varchar('provider', { length: 64 }).notNull(),
-  model: varchar('model', { length: 128 }).notNull(),
+  mode: varchar('mode', { length: 32 }).notNull().default('production'),
+  /** Legacy provider slug or Gateway provider prefix. */
+  provider: varchar('provider', { length: 64 }),
+  /** Short model name or full model id (legacy). */
+  model: varchar('model', { length: 256 }),
+  /** Gateway model id in `provider/model` format. */
+  modelId: varchar('model_id', { length: 256 }),
+  /** Actual underlying inference provider selected by Gateway, when known. */
+  gatewayProvider: varchar('gateway_provider', { length: 128 }),
   modelConfigId: uuid('model_config_id').references(() => modelConfigs.id),
   temperature: real('temperature'),
   maxOutputTokens: integer('max_output_tokens'),
@@ -53,6 +64,7 @@ export const modelUsage = pgTable('model_usage', {
   inputTokens: integer('input_tokens'),
   outputTokens: integer('output_tokens'),
   totalTokens: integer('total_tokens'),
+  /** Gateway/provider-reported cost in USD when available. */
   providerCost: real('provider_cost'),
   latencyMs: integer('latency_ms'),
   success: boolean('success').notNull(),
@@ -71,8 +83,10 @@ export const playgroundResults = pgTable('playground_results', {
   playgroundRunId: uuid('playground_run_id')
     .notNull()
     .references(() => playgroundRuns.id, { onDelete: 'cascade' }),
-  provider: varchar('provider', { length: 64 }).notNull(),
-  model: varchar('model', { length: 128 }).notNull(),
+  provider: varchar('provider', { length: 64 }),
+  model: varchar('model', { length: 256 }),
+  modelId: varchar('model_id', { length: 256 }),
+  gatewayProvider: varchar('gateway_provider', { length: 128 }),
   configuration: jsonb('configuration').notNull(),
   normalizedOutput: jsonb('normalized_output'),
   inputTokens: integer('input_tokens'),
@@ -117,8 +131,10 @@ export const benchmarkResults = pgTable('benchmark_results', {
   benchmarkCaseId: uuid('benchmark_case_id')
     .notNull()
     .references(() => benchmarkCases.id, { onDelete: 'cascade' }),
-  provider: varchar('provider', { length: 64 }).notNull(),
-  model: varchar('model', { length: 128 }).notNull(),
+  provider: varchar('provider', { length: 64 }),
+  model: varchar('model', { length: 256 }),
+  modelId: varchar('model_id', { length: 256 }),
+  gatewayProvider: varchar('gateway_provider', { length: 128 }),
   normalizedOutput: jsonb('normalized_output'),
   countryCorrect: boolean('country_correct'),
   regionCorrect: boolean('region_correct'),

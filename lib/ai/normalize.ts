@@ -1,5 +1,5 @@
 import type { ConfidenceLabel, GeoLocationGuess, GeoLocationResult } from './types'
-import { ProviderError, type ProviderId } from './types'
+import { GatewayError } from './types'
 
 const CONFIDENCE: ConfidenceLabel[] = ['Very High', 'High', 'Medium', 'Low', 'Very Low']
 
@@ -98,18 +98,18 @@ export function stripCodeFences(text: string): string {
   return text.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
 }
 
-export function normalizeGeoLocationResult(raw: unknown, provider: ProviderId): GeoLocationResult {
+export function normalizeGeoLocationResult(raw: unknown, modelId?: string): GeoLocationResult {
   let data = raw
   if (typeof raw === 'string') {
     try {
       data = JSON.parse(stripCodeFences(raw))
     } catch {
-      throw new ProviderError('INVALID_RESPONSE', 'Model returned non-JSON output', provider)
+      throw new GatewayError('INVALID_MODEL_RESPONSE', 'Model returned non-JSON output', modelId)
     }
   }
 
   if (!data || typeof data !== 'object') {
-    throw new ProviderError('INVALID_RESPONSE', 'Model response was empty', provider)
+    throw new GatewayError('INVALID_MODEL_RESPONSE', 'Model response was empty', modelId)
   }
 
   const obj = data as Record<string, unknown>
@@ -120,13 +120,13 @@ export function normalizeGeoLocationResult(raw: unknown, provider: ProviderId): 
       : null
 
   if (!list) {
-    throw new ProviderError('INVALID_RESPONSE', 'Model response missing locations array', provider)
+    throw new GatewayError('INVALID_MODEL_RESPONSE', 'Model response missing locations array', modelId)
   }
 
   const locations = list.map(normalizeGuess).filter((g): g is GeoLocationGuess => g !== null)
 
   if (locations.length === 0) {
-    throw new ProviderError('INVALID_RESPONSE', 'No valid location guesses in response', provider)
+    throw new GatewayError('INVALID_MODEL_RESPONSE', 'No valid location guesses in response', modelId)
   }
 
   return { locations: locations.slice(0, 3) }
