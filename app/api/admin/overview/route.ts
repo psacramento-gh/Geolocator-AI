@@ -86,10 +86,10 @@ export async function GET(req: NextRequest) {
     })
   } catch (err) {
     const raw = err instanceof Error ? err.message : 'Failed to load overview'
-    const message =
-      /relation .* does not exist|Failed query/i.test(raw)
-        ? 'Database tables are missing. Refresh once to auto-create them, or run npm run db:push.'
-        : raw
+    // Only rewrite the explicit missing-relation case; keep other DB errors visible.
+    const message = /relation ["'].*["'] does not exist/i.test(raw)
+      ? 'Database tables are missing. Refresh once to auto-create them, or run npm run db:push.'
+      : raw
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
