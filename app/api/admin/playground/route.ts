@@ -4,20 +4,22 @@ import { getReadyDb } from '@/lib/db'
 import { playgroundResults, playgroundRuns } from '@/lib/db/schema'
 import { requireAdminApi } from '@/lib/auth/admin'
 import {
-  runModel,
+  analyzeLocation,
   getProductionModelConfig,
   adminFacingError,
-  ProviderError,
+  GatewayError,
+  resolveCapabilities,
+  splitModelId,
   type NormalizedModelConfig,
-  type ProviderId,
   type ReasoningLevel,
   type ImageQuality,
   type ResponseFormat,
 } from '@/lib/ai'
 
 type ModelSelection = {
-  provider: ProviderId
-  model: string
+  modelId?: string
+  provider?: string
+  model?: string
 }
 
 export async function POST(req: NextRequest) {
@@ -33,12 +35,24 @@ export async function POST(req: NextRequest) {
     if (!imageBase64) {
       return NextResponse.json({ error: 'Image is required' }, { status: 400 })
     }
-    if (!Array.isArray(models) || models.length < 2) {
+
+    const modelIds = models
+      .map((m) => {
+        if (m.modelId) return String(m.modelId)
+        if (m.provider && m.model) {
+          return m.model.includes('/') ? m.model : `${m.provider}/${m.model}`
+        }
+        if (m.model?.includes('/')) return m.model
+        return ''
+      })
+      .filter(Boolean)
+
+    if (modelIds.length < 2) {
       return NextResponse.json({ error: 'Select at least two models' }, { status: 400 })
     }
 
     const production = await getProductionModelConfig()
-    const baseConfig: Omit<NormalizedModelConfig, 'provider' | 'model'> = {
+    const baseConfig: Omit<NormalizedModelConfig, 'modelId'> = {
       prompt: typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : production.prompt,
       temperature: Number(body.temperature ?? production.temperature),
       maxOutputTokens: Number(body.maxOutputTokens ?? production.maxOutputTokens),
@@ -51,33 +65,45 @@ export async function POST(req: NextRequest) {
     const [run] = await db.insert(playgroundRuns).values({}).returning()
 
     const settled = await Promise.all(
-      models.map(async (sel) => {
+      modelIds.map(async (modelId) => {
         const config: NormalizedModelConfig = {
           ...baseConfig,
-          provider: sel.provider,
-          model: sel.model,
+          modelId,
+        }
+        const capabilities = resolveCapabilities(modelId)
+        const { provider, model } = splitModelId(modelId)
+        const unsupportedSettings = {
+          temperature: !capabilities.temperature,
+          maxOutputTokens: !capabilities.maxOutputTokens,
+          reasoning: !capabilities.reasoning,
+          imageQuality: !capabilities.imageQuality,
         }
 
         try {
-          const result = await runModel({
+          const result = await analyzeLocation({
             config,
             imageBase64,
             mimeType,
-            source: 'playground',
-            includeRaw: false,
+            mode: 'playground',
           })
 
           const [row] = await db
             .insert(playgroundResults)
             .values({
               playgroundRunId: run.id,
-              provider: sel.provider,
-              model: sel.model,
-              configuration: config,
-              normalizedOutput: result.output,
+              provider,
+              model,
+              modelId,
+              gatewayProvider: result.gateway.provider ?? null,
+              configuration: {
+                ...config,
+                appliedSettings: result.appliedSettings,
+                unsupportedSettings,
+              },
+              normalizedOutput: result.result,
               inputTokens: result.usage.inputTokens ?? null,
               outputTokens: result.usage.outputTokens ?? null,
-              providerCost: result.usage.providerReportedCost ?? null,
+              providerCost: result.usage.reportedCost ?? null,
               latencyMs: result.latencyMs,
               success: true,
             })
@@ -85,28 +111,39 @@ export async function POST(req: NextRequest) {
 
           return {
             id: row.id,
-            provider: sel.provider,
-            model: sel.model,
+            modelId,
+            provider,
+            model,
+            gatewayProvider: result.gateway.provider,
             success: true,
-            output: result.output,
-            usage: result.usage,
+            output: result.result,
+            usage: {
+              inputTokens: result.usage.inputTokens,
+              outputTokens: result.usage.outputTokens,
+              totalTokens: result.usage.totalTokens,
+              reportedCost: result.usage.reportedCost,
+              providerReportedCost: result.usage.reportedCost,
+            },
             latencyMs: result.latencyMs,
+            appliedSettings: result.appliedSettings,
+            unsupportedSettings,
             qualityRating: null,
             locationRating: null,
             adminNote: null,
           }
         } catch (err) {
-          const pe = err instanceof ProviderError ? err : null
-          const errorType = pe?.type || 'PROVIDER_ERROR'
+          const pe = err instanceof GatewayError ? err : null
+          const errorType = pe?.type || 'GATEWAY_ERROR'
           const errorMessage = pe ? adminFacingError(pe.type) : 'Request failed'
 
           const [row] = await db
             .insert(playgroundResults)
             .values({
               playgroundRunId: run.id,
-              provider: sel.provider,
-              model: sel.model,
-              configuration: config,
+              provider,
+              model,
+              modelId,
+              configuration: { ...config, unsupportedSettings },
               success: false,
               errorType,
               errorMessage,
@@ -115,11 +152,13 @@ export async function POST(req: NextRequest) {
 
           return {
             id: row.id,
-            provider: sel.provider,
-            model: sel.model,
+            modelId,
+            provider,
+            model,
             success: false,
             errorType,
             errorMessage,
+            unsupportedSettings,
             qualityRating: null,
             locationRating: null,
             adminNote: null,

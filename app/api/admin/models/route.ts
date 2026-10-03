@@ -49,6 +49,7 @@ export async function GET() {
     return NextResponse.json({
       models: discovered.models,
       providers: discovered.providers,
+      discovery: discovered.status,
       defaultPrompt,
       defaultSettings,
     })

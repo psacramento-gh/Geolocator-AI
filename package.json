@@ -12,12 +12,12 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
     "@moneydevkit/nextjs": "^0.18.0",
     "@neondatabase/serverless": "^1.2.0",
     "@radix-ui/react-progress": "^1.1.8",
     "@radix-ui/react-separator": "^1.1.8",
     "@vercel/blob": "^2.8.0",
+    "ai": "^7.0.127",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.3",
@@ -25,10 +25,10 @@
     "jose": "^6.2.12",
     "lucide-react": "^0.577.0",
     "next": "16.1.6",
-    "openai": "^7.27.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

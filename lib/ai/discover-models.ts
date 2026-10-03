@@ -1,198 +1,220 @@
-import OpenAI from 'openai'
+import { gateway } from 'ai'
 import { humanizeModelId, resolveCapabilities } from './capabilities'
-import { isOpenAiVisionModel } from './openai-models'
-import { MODEL_REGISTRY, listProviders, providerLabel } from './registry'
-import type { ModelDefinition, ProviderId } from './types'
+import {
+  getEnabledRegistryModels,
+  getModelDefinition,
+  MODEL_REGISTRY,
+  providerLabel,
+  splitModelId,
+} from './registry'
+import type { ModelDefinition } from './types'
 
-export type ProviderDiscoveryStatus = {
-  id: ProviderId
-  label: string
+export type DiscoveryStatus = {
   source: 'live' | 'fallback'
   error?: string
+  fetchedAt?: string
 }
 
 export type DiscoverModelsResult = {
   models: ModelDefinition[]
-  providers: ProviderDiscoveryStatus[]
+  status: DiscoveryStatus
+  /** Models grouped by Gateway provider prefix for admin UI. */
+  providers: Array<{
+    id: string
+    label: string
+    source: 'live' | 'fallback'
+    error?: string
+  }>
 }
 
-type GeminiListModel = {
+type CacheEntry = {
+  result: DiscoverModelsResult
+  expiresAt: number
+}
+
+const CACHE_TTL_MS = 10 * 60 * 1000
+let cache: CacheEntry | null = null
+
+type GatewayListedModel = {
+  id: string
   name?: string
-  displayName?: string
-  description?: string
-  supportedGenerationMethods?: string[]
-  thinking?: boolean
+  description?: string | null
+  tags?: string[]
+  modelType?: string | null
 }
 
-function fallbackModels(provider: ProviderId): ModelDefinition[] {
-  return MODEL_REGISTRY.filter((m) => m.provider === provider)
+function allowlistSet(): Set<string> {
+  return new Set(getEnabledRegistryModels().map((m) => m.id))
 }
 
-function toDefinition(
-  provider: ProviderId,
-  id: string,
-  label?: string,
-  hints?: Parameters<typeof resolveCapabilities>[2]
-): ModelDefinition {
-  const known = MODEL_REGISTRY.find((m) => m.provider === provider && m.id === id)
+function isVisionCapable(model: GatewayListedModel): boolean {
+  const tags = (model.tags || []).map((t) => t.toLowerCase())
+  if (tags.includes('vision')) return true
+  // Some listings omit tags; fall back to registry knowledge / id heuristics.
+  if (getModelDefinition(model.id)?.capabilities.vision) return true
+  const id = model.id.toLowerCase()
+  if (/(embedding|tts|whisper|rerank|moderation|coder(?!-)|image-preview$)/i.test(id)) {
+    return false
+  }
+  return false
+}
+
+function toDefinition(model: GatewayListedModel): ModelDefinition {
+  const known = getModelDefinition(model.id)
+  const tags = (model.tags || []).map((t) => t.toLowerCase())
   return {
-    id,
-    provider,
-    label: known?.label || label || humanizeModelId(id),
-    capabilities: resolveCapabilities(provider, id, hints),
+    id: model.id,
+    label: known?.label || model.name || humanizeModelId(model.id),
+    enabled: known?.enabled ?? true,
+    capabilities: resolveCapabilities(model.id, {
+      vision: true,
+      reasoning: tags.includes('reasoning') || known?.capabilities.reasoning,
+      structuredOutput:
+        tags.includes('structured-output') || known?.capabilities.structuredOutput !== false,
+    }),
   }
 }
 
-function isGeminiVisionModel(model: GeminiListModel): boolean {
-  const id = (model.name || '').replace(/^models\//, '').toLowerCase()
-  if (!id.includes('gemini')) return false
-  if (!model.supportedGenerationMethods?.includes('generateContent')) return false
-  if (/(embedding|imagen|aqa|tts|robotics|gemma)/i.test(id)) return false
-  return true
-}
-
-async function listGeminiModels(): Promise<ModelDefinition[]> {
-  const apiKey = process.env.GEMINI_API_KEY
-  if (!apiKey) throw new Error('API key not configured')
-
-  const models: ModelDefinition[] = []
-  let pageToken: string | undefined
-
-  do {
-    const url = new URL('https://generativelanguage.googleapis.com/v1beta/models')
-    url.searchParams.set('key', apiKey)
-    url.searchParams.set('pageSize', '100')
-    if (pageToken) url.searchParams.set('pageToken', pageToken)
-
-    const res = await fetch(url)
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`Gemini list models failed (${res.status}): ${body.slice(0, 200)}`)
-    }
-
-    const json = (await res.json()) as {
-      models?: GeminiListModel[]
-      nextPageToken?: string
-    }
-
-    for (const model of json.models || []) {
-      if (!isGeminiVisionModel(model)) continue
-      const id = (model.name || '').replace(/^models\//, '')
-      if (!id) continue
-      models.push(
-        toDefinition('gemini', id, model.displayName, {
-          reasoning: Boolean(model.thinking),
-        })
-      )
-    }
-
-    pageToken = json.nextPageToken
-  } while (pageToken)
-
-  return models.sort((a, b) => a.label.localeCompare(b.label))
-}
-
-async function listOpenAiModels(): Promise<ModelDefinition[]> {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) throw new Error('API key not configured')
-
-  const client = new OpenAI({ apiKey })
-  const listed = await client.models.list()
-  const models: ModelDefinition[] = []
-
-  for await (const model of listed) {
-    if (!isOpenAiVisionModel(model.id)) continue
-    models.push(toDefinition('openai', model.id))
+function fallbackResult(error?: string): DiscoverModelsResult {
+  const models = getEnabledRegistryModels()
+  const providerIds = [...new Set(models.map((m) => splitModelId(m.id).provider))]
+  return {
+    models,
+    status: {
+      source: 'fallback',
+      error,
+      fetchedAt: new Date().toISOString(),
+    },
+    providers: providerIds.map((id) => ({
+      id,
+      label: providerLabel(id),
+      source: 'fallback',
+      error,
+    })),
   }
-
-  return models.sort((a, b) => a.label.localeCompare(b.label))
 }
 
-function isQwenVisionModel(id: string): boolean {
-  const lower = id.toLowerCase()
-  if (!lower.includes('vl')) return false
-  if (/(embedding|tts|asr|audio|rerank)/i.test(lower)) return false
-  return true
-}
-
-async function listQwenModels(): Promise<ModelDefinition[]> {
-  const apiKey = process.env.QWEN_API_KEY
-  if (!apiKey) throw new Error('API key not configured')
-
-  const client = new OpenAI({
-    apiKey,
-    baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
-  })
-  const listed = await client.models.list()
-  const models: ModelDefinition[] = []
-
-  for await (const model of listed) {
-    if (!isQwenVisionModel(model.id)) continue
-    models.push(toDefinition('qwen', model.id))
-  }
-
-  return models.sort((a, b) => a.label.localeCompare(b.label))
-}
-
-const listers: Record<ProviderId, () => Promise<ModelDefinition[]>> = {
-  gemini: listGeminiModels,
-  openai: listOpenAiModels,
-  qwen: listQwenModels,
-}
-
-async function discoverProvider(provider: ProviderId): Promise<{
-  models: ModelDefinition[]
-  status: ProviderDiscoveryStatus
-}> {
+async function fetchGatewayModels(): Promise<GatewayListedModel[]> {
+  // Prefer SDK helper (authenticated when credentials present).
   try {
-    const models = await listers[provider]()
-    if (!models.length) {
-      return {
-        models: fallbackModels(provider),
-        status: {
-          id: provider,
-          label: providerLabel(provider),
-          source: 'fallback',
-          error: 'Provider returned no vision models',
-        },
+    const listed = await gateway.getAvailableModels()
+    return (listed.models || []).map((m) => ({
+      id: m.id,
+      name: m.name,
+      description: m.description,
+      modelType: m.modelType,
+      // Tags may appear on extended responses; keep empty when absent.
+      tags: (m as { tags?: string[] }).tags,
+    }))
+  } catch {
+    // Public catalogue fallback (no auth required).
+    const res = await fetch('https://ai-gateway.vercel.sh/v1/models', {
+      headers: { Accept: 'application/json' },
+      next: { revalidate: 600 },
+    })
+    if (!res.ok) {
+      throw new Error(`Gateway model list failed (${res.status})`)
+    }
+    const json = (await res.json()) as {
+      data?: Array<{
+        id: string
+        name?: string
+        description?: string
+        tags?: string[]
+        type?: string
+      }>
+    }
+    return (json.data || []).map((m) => ({
+      id: m.id,
+      name: m.name,
+      description: m.description,
+      tags: m.tags,
+      modelType: m.type,
+    }))
+  }
+}
+
+/**
+ * Gateway available models → vision-capable → GeoLocator allowlist → admin selector.
+ * Results are cached briefly to avoid hammering the catalogue on every page load.
+ */
+export async function discoverModels(options?: { force?: boolean }): Promise<DiscoverModelsResult> {
+  if (!options?.force && cache && cache.expiresAt > Date.now()) {
+    return cache.result
+  }
+
+  try {
+    const listed = await fetchGatewayModels()
+    const allow = allowlistSet()
+
+    const visionModels = listed
+      .filter((m) => m.id.includes('/'))
+      .filter(isVisionCapable)
+      .filter((m) => allow.has(m.id) || getModelDefinition(m.id)?.enabled)
+
+    // Prefer allowlisted models that appear in live catalogue; include enabled
+    // registry models missing from live list so production selection still works.
+    const byId = new Map<string, ModelDefinition>()
+    for (const m of visionModels) {
+      if (allow.has(m.id)) byId.set(m.id, toDefinition(m))
+    }
+    for (const reg of getEnabledRegistryModels()) {
+      if (!byId.has(reg.id)) {
+        // Keep curated entry even if live catalogue omitted it (preview churn).
+        const live = listed.find((l) => l.id === reg.id)
+        byId.set(reg.id, live ? toDefinition(live) : reg)
       }
     }
-    return {
+
+    const models = [...byId.values()].sort((a, b) => {
+      const pa = splitModelId(a.id).provider
+      const pb = splitModelId(b.id).provider
+      if (pa !== pb) return pa.localeCompare(pb)
+      return a.label.localeCompare(b.label)
+    })
+
+    if (!models.length) {
+      const fallback = fallbackResult('Gateway returned no matching vision models')
+      cache = { result: fallback, expiresAt: Date.now() + CACHE_TTL_MS }
+      return fallback
+    }
+
+    const providerIds = [...new Set(models.map((m) => splitModelId(m.id).provider))]
+    const result: DiscoverModelsResult = {
       models,
       status: {
-        id: provider,
-        label: providerLabel(provider),
         source: 'live',
+        fetchedAt: new Date().toISOString(),
       },
+      providers: providerIds.map((id) => ({
+        id,
+        label: providerLabel(id),
+        source: 'live',
+      })),
     }
+    cache = { result, expiresAt: Date.now() + CACHE_TTL_MS }
+    return result
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    return {
-      models: fallbackModels(provider),
-      status: {
-        id: provider,
-        label: providerLabel(provider),
-        source: 'fallback',
-        error: message,
-      },
-    }
+    const fallback = fallbackResult(message)
+    cache = { result: fallback, expiresAt: Date.now() + Math.min(CACHE_TTL_MS, 60_000) }
+    return fallback
   }
 }
 
-/** Fetch vision models from each provider, falling back to the curated registry on failure. */
-export async function discoverModels(): Promise<DiscoverModelsResult> {
-  const results = await Promise.all(listProviders().map((id) => discoverProvider(id)))
-  const models = results.flatMap((r) => r.models)
-  const providers = results.map((r) => r.status)
-
-  // Stable provider order, then label within provider.
-  const order = listProviders()
-  models.sort((a, b) => {
-    const pa = order.indexOf(a.provider)
-    const pb = order.indexOf(b.provider)
-    if (pa !== pb) return pa - pb
-    return a.label.localeCompare(b.label)
-  })
-
-  return { models, providers }
+/** Ensure a model id is present in discovery results (e.g. active production model). */
+export function ensureModelInList(models: ModelDefinition[], modelId: string): ModelDefinition[] {
+  if (!modelId || models.some((m) => m.id === modelId)) return models
+  const known = getModelDefinition(modelId)
+  return [
+    {
+      id: modelId,
+      label: known?.label || humanizeModelId(modelId),
+      enabled: true,
+      capabilities: known?.capabilities || resolveCapabilities(modelId),
+    },
+    ...models,
+  ]
 }
+
+export { MODEL_REGISTRY }

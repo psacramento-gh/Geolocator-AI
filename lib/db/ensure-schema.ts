@@ -39,8 +39,9 @@ async function createSchema(): Promise<void> {
       CREATE TABLE IF NOT EXISTS model_configs (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         name varchar(128) NOT NULL,
-        provider varchar(64) NOT NULL,
-        model varchar(128) NOT NULL,
+        provider varchar(64),
+        model varchar(256),
+        model_id varchar(256),
         prompt text NOT NULL,
         temperature real NOT NULL DEFAULT 0.2,
         max_output_tokens integer NOT NULL DEFAULT 1200,
@@ -54,7 +55,6 @@ async function createSchema(): Promise<void> {
       )
     `,
 
-    // Upgrade path: older installs created model_configs without production_slot.
     txn`
       ALTER TABLE model_configs
       ADD COLUMN IF NOT EXISTS production_slot varchar(32)
@@ -62,6 +62,10 @@ async function createSchema(): Promise<void> {
     txn`
       ALTER TABLE model_configs
       ADD COLUMN IF NOT EXISTS is_production boolean NOT NULL DEFAULT false
+    `,
+    txn`
+      ALTER TABLE model_configs
+      ADD COLUMN IF NOT EXISTS model_id varchar(256)
     `,
 
     txn`
@@ -75,12 +79,38 @@ async function createSchema(): Promise<void> {
       WHERE is_production = true
     `,
 
+    // Backfill Gateway model_id from legacy provider+model columns.
+    txn`
+      UPDATE model_configs
+      SET model_id = CASE
+        WHEN model_id IS NOT NULL AND model_id <> '' THEN model_id
+        WHEN model LIKE '%/%' THEN model
+        WHEN provider = 'gemini' AND model = 'gemini-3.1-flash-lite-preview'
+          THEN 'google/gemini-3.1-flash-lite'
+        WHEN provider = 'gemini' OR provider = 'google'
+          THEN 'google/' || model
+        WHEN provider = 'openai' THEN 'openai/' || model
+        WHEN provider = 'qwen' OR provider = 'alibaba' THEN
+          CASE
+            WHEN model IN ('qwen-vl-max', 'qwen-vl-plus', 'qwen3-vl-plus')
+              THEN 'alibaba/qwen3-vl-instruct'
+            ELSE 'alibaba/' || model
+          END
+        WHEN provider IS NOT NULL AND model IS NOT NULL THEN provider || '/' || model
+        ELSE 'google/gemini-3.1-flash-lite'
+      END
+      WHERE model_id IS NULL OR model_id = ''
+    `,
+
     txn`
       CREATE TABLE IF NOT EXISTS model_usage (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         request_id varchar(64) NOT NULL,
-        provider varchar(64) NOT NULL,
-        model varchar(128) NOT NULL,
+        mode varchar(32) NOT NULL DEFAULT 'production',
+        provider varchar(64),
+        model varchar(256),
+        model_id varchar(256),
+        gateway_provider varchar(128),
         model_config_id uuid REFERENCES model_configs(id),
         temperature real,
         max_output_tokens integer,
@@ -98,6 +128,23 @@ async function createSchema(): Promise<void> {
       )
     `,
 
+    txn`ALTER TABLE model_usage ADD COLUMN IF NOT EXISTS mode varchar(32) NOT NULL DEFAULT 'production'`,
+    txn`ALTER TABLE model_usage ADD COLUMN IF NOT EXISTS model_id varchar(256)`,
+    txn`ALTER TABLE model_usage ADD COLUMN IF NOT EXISTS gateway_provider varchar(128)`,
+
+    txn`
+      UPDATE model_usage
+      SET model_id = COALESCE(
+        NULLIF(model_id, ''),
+        CASE
+          WHEN model LIKE '%/%' THEN model
+          WHEN provider IS NOT NULL AND model IS NOT NULL THEN provider || '/' || model
+          ELSE model
+        END
+      )
+      WHERE model_id IS NULL OR model_id = ''
+    `,
+
     txn`
       CREATE TABLE IF NOT EXISTS playground_runs (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -109,8 +156,10 @@ async function createSchema(): Promise<void> {
       CREATE TABLE IF NOT EXISTS playground_results (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         playground_run_id uuid NOT NULL REFERENCES playground_runs(id) ON DELETE CASCADE,
-        provider varchar(64) NOT NULL,
-        model varchar(128) NOT NULL,
+        provider varchar(64),
+        model varchar(256),
+        model_id varchar(256),
+        gateway_provider varchar(128),
         configuration jsonb NOT NULL,
         normalized_output jsonb,
         input_tokens integer,
@@ -126,6 +175,9 @@ async function createSchema(): Promise<void> {
         created_at timestamptz NOT NULL DEFAULT now()
       )
     `,
+
+    txn`ALTER TABLE playground_results ADD COLUMN IF NOT EXISTS model_id varchar(256)`,
+    txn`ALTER TABLE playground_results ADD COLUMN IF NOT EXISTS gateway_provider varchar(128)`,
 
     txn`
       CREATE TABLE IF NOT EXISTS benchmark_cases (
@@ -157,8 +209,10 @@ async function createSchema(): Promise<void> {
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         benchmark_run_id uuid NOT NULL REFERENCES benchmark_runs(id) ON DELETE CASCADE,
         benchmark_case_id uuid NOT NULL REFERENCES benchmark_cases(id) ON DELETE CASCADE,
-        provider varchar(64) NOT NULL,
-        model varchar(128) NOT NULL,
+        provider varchar(64),
+        model varchar(256),
+        model_id varchar(256),
+        gateway_provider varchar(128),
         normalized_output jsonb,
         country_correct boolean,
         region_correct boolean,
@@ -174,5 +228,8 @@ async function createSchema(): Promise<void> {
         created_at timestamptz NOT NULL DEFAULT now()
       )
     `,
+
+    txn`ALTER TABLE benchmark_results ADD COLUMN IF NOT EXISTS model_id varchar(256)`,
+    txn`ALTER TABLE benchmark_results ADD COLUMN IF NOT EXISTS gateway_provider varchar(128)`,
   ])
 }
