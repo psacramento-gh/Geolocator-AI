@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
-import { getDb } from '@/lib/db'
+import { getReadyDb } from '@/lib/db'
 import { benchmarkCases } from '@/lib/db/schema'
 import { requireAdminApi } from '@/lib/auth/admin'
 import { fetchPrivateBlob } from '@/lib/blob'
@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'caseId is required' }, { status: 400 })
     }
 
-    const db = getDb()
+    const db = await getReadyDb()
     const [row] = await db
       .select()
       .from(benchmarkCases)

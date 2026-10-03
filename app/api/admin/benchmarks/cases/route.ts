@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { desc, eq } from 'drizzle-orm'
-import { getDb } from '@/lib/db'
+import { getReadyDb } from '@/lib/db'
 import { benchmarkCases } from '@/lib/db/schema'
 import { requireAdminApi } from '@/lib/auth/admin'
 import { deleteBenchmarkImage, uploadBenchmarkImage } from '@/lib/blob'
@@ -10,7 +10,7 @@ export async function GET() {
   if (denied) return denied
 
   try {
-    const db = getDb()
+    const db = await getReadyDb()
     const cases = await db.select().from(benchmarkCases).orderBy(desc(benchmarkCases.createdAt))
     return NextResponse.json({ cases })
   } catch (err) {
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
       file.type || 'image/jpeg'
     )
 
-    const db = getDb()
+    const db = await getReadyDb()
     const [created] = await db
       .insert(benchmarkCases)
       .values({
@@ -81,7 +81,7 @@ export async function DELETE(req: NextRequest) {
     const id = req.nextUrl.searchParams.get('id')
     if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
 
-    const db = getDb()
+    const db = await getReadyDb()
     const [existing] = await db.select().from(benchmarkCases).where(eq(benchmarkCases.id, id)).limit(1)
     if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
-import { getDb } from '@/lib/db'
+import { getReadyDb } from '@/lib/db'
 import { playgroundResults, playgroundRuns } from '@/lib/db/schema'
 import { requireAdminApi } from '@/lib/auth/admin'
 import {
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
       responseFormat: (body.responseFormat || production.responseFormat) as ResponseFormat,
     }
 
-    const db = getDb()
+    const db = await getReadyDb()
     const [run] = await db.insert(playgroundRuns).values({}).returning()
 
     const settled = await Promise.all(
@@ -144,7 +144,7 @@ export async function PATCH(req: NextRequest) {
     const id = String(body.id || '')
     if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
 
-    const db = getDb()
+    const db = await getReadyDb()
     const patch: {
       qualityRating?: string | null
       locationRating?: string | null

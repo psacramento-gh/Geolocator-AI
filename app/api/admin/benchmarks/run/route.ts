@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { desc, eq, inArray } from 'drizzle-orm'
-import { getDb } from '@/lib/db'
+import { getReadyDb } from '@/lib/db'
 import { benchmarkCases, benchmarkResults, benchmarkRuns } from '@/lib/db/schema'
 import { requireAdminApi } from '@/lib/auth/admin'
 import { fetchPrivateBlob } from '@/lib/blob'
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const runId = req.nextUrl.searchParams.get('runId')
-    const db = getDb()
+    const db = await getReadyDb()
 
     if (runId) {
       const [run] = await db.select().from(benchmarkRuns).where(eq(benchmarkRuns.id, runId)).limit(1)
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
       responseFormat: (body.responseFormat || production.responseFormat) as ResponseFormat,
     }
 
-    const db = getDb()
+    const db = await getReadyDb()
     const cases = await db.select().from(benchmarkCases).where(inArray(benchmarkCases.id, caseIds))
     if (!cases.length) {
       return NextResponse.json({ error: 'No matching cases found' }, { status: 404 })
