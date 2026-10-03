@@ -15,6 +15,29 @@ import {
 } from '@/components/admin/ModelComparePicker'
 import { DEFAULT_COMPARE_MODEL_IDS } from '@/lib/ai/registry'
 import type { GeoLocationResult, ModelDefinition } from '@/lib/ai/types'
+import { compressImageBlob } from '@/lib/compress-image'
+
+/** Vercel serverless request body limit is ~4.5MB; leave headroom for JSON wrappers. */
+const MAX_PLAYGROUND_PAYLOAD_CHARS = 3_500_000
+
+async function readJsonResponse(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text()
+  try {
+    return text ? (JSON.parse(text) as Record<string, unknown>) : {}
+  } catch {
+    const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 120)
+    if (/request entity too large/i.test(text) || res.status === 413) {
+      throw new Error(
+        'Image payload is too large for the server. Try a smaller photo — uploads are compressed automatically.'
+      )
+    }
+    throw new Error(
+      snippet
+        ? `Server returned a non-JSON response (${res.status}): ${snippet}`
+        : `Server returned a non-JSON response (${res.status})`
+    )
+  }
+}
 
 type PlayResult = {
   id: string
@@ -45,19 +68,6 @@ type PlayResult = {
   adminNote: string | null
 }
 
-function fileToBase64(file: File): Promise<{ base64: string; mimeType: string; preview: string }> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(new Error('Failed to read file'))
-    reader.onload = () => {
-      const dataUrl = String(reader.result || '')
-      const [, base64 = ''] = dataUrl.split(',')
-      resolve({ base64, mimeType: file.type || 'image/jpeg', preview: dataUrl })
-    }
-    reader.readAsDataURL(file)
-  })
-}
-
 export default function PlaygroundPage() {
   const [models, setModels] = useState<ModelDefinition[]>([])
   const [providers, setProviders] = useState<ProviderGroup[]>([])
@@ -78,20 +88,28 @@ export default function PlaygroundPage() {
   useEffect(() => {
     fetch('/api/admin/models')
       .then(async (res) => {
-        const json = await res.json()
-        if (!res.ok) throw new Error(json.error || 'Failed to load models')
+        const json = await readJsonResponse(res)
+        if (!res.ok) throw new Error(String(json.error || 'Failed to load models'))
         const loaded = json.models as ModelDefinition[]
         setModels(loaded)
         setProviders((json.providers || []) as ProviderGroup[])
-        setPrompt(json.defaultPrompt || '')
-        setTemperature(json.defaultSettings?.temperature ?? 0.2)
-        setMaxOutputTokens(json.defaultSettings?.maxOutputTokens ?? 1200)
-        setReasoningLevel(json.defaultSettings?.reasoningLevel ?? 'medium')
-        setImageQuality(json.defaultSettings?.imageQuality ?? 'high')
-        const defaults = new Set<string>(DEFAULT_COMPARE_MODEL_IDS)
+        setPrompt(String(json.defaultPrompt || ''))
+        const defaults = json.defaultSettings as
+          | {
+              temperature?: number
+              maxOutputTokens?: number
+              reasoningLevel?: string
+              imageQuality?: string
+            }
+          | undefined
+        setTemperature(defaults?.temperature ?? 0.2)
+        setMaxOutputTokens(defaults?.maxOutputTokens ?? 1200)
+        setReasoningLevel(defaults?.reasoningLevel ?? 'medium')
+        setImageQuality(defaults?.imageQuality ?? 'high')
+        const defaultIds = new Set<string>(DEFAULT_COMPARE_MODEL_IDS)
         const initial: Record<string, boolean> = {}
         for (const m of loaded) {
-          initial[modelKey(m.id)] = defaults.has(m.id)
+          initial[modelKey(m.id)] = defaultIds.has(m.id)
         }
         setSelected(initial)
       })
@@ -108,10 +126,15 @@ export default function PlaygroundPage() {
 
   async function onFile(file: File | null) {
     if (!file) return
-    const data = await fileToBase64(file)
-    setImageBase64(data.base64)
-    setMimeType(data.mimeType)
-    setPreview(data.preview)
+    try {
+      setError('')
+      const data = await compressImageBlob(file)
+      setImageBase64(data.base64)
+      setMimeType(data.mimeType)
+      setPreview(data.preview)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to process image')
+    }
   }
 
   async function runComparison() {
@@ -119,23 +142,29 @@ export default function PlaygroundPage() {
     setError('')
     setResults([])
     try {
+      const body = JSON.stringify({
+        image: imageBase64,
+        mimeType,
+        models: selectedModels,
+        prompt,
+        temperature,
+        maxOutputTokens,
+        reasoningLevel,
+        imageQuality,
+      })
+      if (body.length > MAX_PLAYGROUND_PAYLOAD_CHARS) {
+        throw new Error(
+          'Image payload is still too large after compression. Please try a smaller photo.'
+        )
+      }
       const res = await fetch('/api/admin/playground', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image: imageBase64,
-          mimeType,
-          models: selectedModels,
-          prompt,
-          temperature,
-          maxOutputTokens,
-          reasoningLevel,
-          imageQuality,
-        }),
+        body,
       })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error || 'Run failed')
-      setResults(json.results)
+      const json = await readJsonResponse(res)
+      if (!res.ok) throw new Error(String(json.error || 'Run failed'))
+      setResults((json.results || []) as PlayResult[])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Run failed')
     } finally {

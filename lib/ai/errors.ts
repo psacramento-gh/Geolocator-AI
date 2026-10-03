@@ -42,6 +42,12 @@ export function classifyGatewayError(err: unknown, modelId?: string): GatewayErr
   } else if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('deadline')) {
     type = 'TIMEOUT'
   } else if (
+    status === 413 ||
+    lower.includes('request entity too large') ||
+    lower.includes('payload too large')
+  ) {
+    type = 'INVALID_IMAGE'
+  } else if (
     lower.includes('image') &&
     (lower.includes('invalid') || lower.includes('unsupported') || lower.includes('corrupt'))
   ) {

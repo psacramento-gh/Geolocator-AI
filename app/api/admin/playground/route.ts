@@ -35,6 +35,16 @@ export async function POST(req: NextRequest) {
     if (!imageBase64) {
       return NextResponse.json({ error: 'Image is required' }, { status: 400 })
     }
+    // Guard before Gateway calls; client also compresses uploads to stay under Vercel's body limit.
+    if (imageBase64.length > 3_500_000) {
+      return NextResponse.json(
+        {
+          error:
+            'Image payload is too large. Please upload a smaller photo (playground compresses to max 1024px).',
+        },
+        { status: 413 }
+      )
+    }
 
     const modelIds = models
       .map((m) => {

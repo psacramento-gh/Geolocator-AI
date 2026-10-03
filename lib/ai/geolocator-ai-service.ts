@@ -18,25 +18,27 @@ import { GatewayError } from './types'
 
 const confidenceSchema = z.enum(['Very High', 'High', 'Medium', 'Low', 'Very Low'])
 
-/** Nullish fields match the prompt contract (`null` when unknown) and OpenAI strict JSON schema. */
+/**
+ * Use `.nullable()` (not `.nullish()`/`.optional()`) so OpenAI strict JSON Schema
+ * includes every property in `required` while still allowing null unknowns.
+ */
 const geoLocationSchema = z.object({
   locations: z
     .array(
       z.object({
-        city: z.string().nullish(),
-        region: z.string().nullish(),
+        city: z.string().nullable(),
+        region: z.string().nullable(),
         country: z.string(),
-        location: z.string().nullish(),
-        confidence: z.union([confidenceSchema, z.number(), z.string()]).nullish(),
-        latitude: z.number().nullish(),
-        longitude: z.number().nullish(),
+        location: z.string().nullable(),
+        confidence: z.union([confidenceSchema, z.number(), z.string()]).nullable(),
+        latitude: z.number().nullable(),
+        longitude: z.number().nullable(),
         clues: z
           .object({
-            numbered: z.array(z.string()).nullish(),
-            summary: z.string().nullish(),
+            numbered: z.array(z.string()).nullable(),
+            summary: z.string().nullable(),
           })
-          .nullish(),
-        reasoning: z.string().nullish(),
+          .nullable(),
       })
     )
     .min(1)
@@ -216,9 +218,9 @@ export async function analyzeLocation(
     }
 
     const imagePart = {
-      type: 'image' as const,
-      image: Buffer.from(options.imageBase64, 'base64'),
-      mediaType: options.mimeType,
+      type: 'file' as const,
+      mediaType: options.mimeType || 'image/jpeg',
+      data: Buffer.from(options.imageBase64, 'base64'),
       ...(capabilities.imageQuality
         ? {
             providerOptions: {
