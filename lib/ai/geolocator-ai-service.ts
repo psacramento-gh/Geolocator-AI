@@ -18,24 +18,25 @@ import { GatewayError } from './types'
 
 const confidenceSchema = z.enum(['Very High', 'High', 'Medium', 'Low', 'Very Low'])
 
+/** Nullish fields match the prompt contract (`null` when unknown) and OpenAI strict JSON schema. */
 const geoLocationSchema = z.object({
   locations: z
     .array(
       z.object({
-        city: z.string().optional(),
-        region: z.string().optional(),
+        city: z.string().nullish(),
+        region: z.string().nullish(),
         country: z.string(),
-        location: z.string().optional(),
-        confidence: z.union([confidenceSchema, z.number(), z.string()]).optional(),
-        latitude: z.number().optional(),
-        longitude: z.number().optional(),
+        location: z.string().nullish(),
+        confidence: z.union([confidenceSchema, z.number(), z.string()]).nullish(),
+        latitude: z.number().nullish(),
+        longitude: z.number().nullish(),
         clues: z
           .object({
-            numbered: z.array(z.string()).optional(),
-            summary: z.string().optional(),
+            numbered: z.array(z.string()).nullish(),
+            summary: z.string().nullish(),
           })
-          .optional(),
-        reasoning: z.string().optional(),
+          .nullish(),
+        reasoning: z.string().nullish(),
       })
     )
     .min(1)
@@ -81,7 +82,13 @@ function extractGatewayProvider(providerMetadata: unknown, modelId: string): str
       const routing = g.routing
       if (routing && typeof routing === 'object') {
         const r = routing as Record<string, unknown>
-        for (const key of ['provider', 'providerName', 'actualProvider', 'servedBy']) {
+        for (const key of [
+          'finalProvider',
+          'provider',
+          'providerName',
+          'actualProvider',
+          'servedBy',
+        ]) {
           if (typeof r[key] === 'string' && r[key]) return r[key] as string
         }
       }
@@ -99,11 +106,17 @@ function mapReasoningToProviderOptions(
 ): Record<string, unknown> | undefined {
   const { provider } = splitModelId(modelId)
   if (provider === 'openai') {
-    if (level === 'none') return undefined
+    // Always send an explicit effort — omitting it leaves the provider default (medium).
+    const reasoningEffort =
+      level === 'none'
+        ? 'none'
+        : level === 'low'
+          ? 'low'
+          : level === 'high'
+            ? 'high'
+            : 'medium'
     return {
-      openai: {
-        reasoningEffort: level === 'low' ? 'low' : level === 'high' ? 'high' : 'medium',
-      },
+      openai: { reasoningEffort },
     }
   }
   if (provider === 'google') {
@@ -202,11 +215,21 @@ export async function analyzeLocation(
       }
     }
 
+    const imagePart: {
+      type: 'image'
+      image: Buffer
+      mediaType: string
+      providerOptions?: Record<string, Record<string, unknown>>
+    } = {
+      type: 'image',
+      image: Buffer.from(options.imageBase64, 'base64'),
+      mediaType: options.mimeType,
+    }
+
+    // OpenAI image detail must be set on the image part, not request-level options.
     if (capabilities.imageQuality) {
-      const detail = mapImageQuality(options.config.imageQuality)
-      providerOptions.openai = {
-        ...(providerOptions.openai || {}),
-        imageDetail: detail,
+      imagePart.providerOptions = {
+        openai: { imageDetail: mapImageQuality(options.config.imageQuality) },
       }
     }
 
@@ -220,11 +243,7 @@ export async function analyzeLocation(
         {
           role: 'user',
           content: [
-            {
-              type: 'image',
-              image: Buffer.from(options.imageBase64, 'base64'),
-              mediaType: options.mimeType,
-            },
+            imagePart,
             {
               type: 'text',
               text: 'Analyze this photograph and return the JSON as instructed.',
