@@ -39,7 +39,6 @@ const geoLocationSchema = z.object({
             summary: z.string().nullable(),
           })
           .nullable(),
-        reasoning: z.string().nullable(),
       })
     )
     .min(1)
