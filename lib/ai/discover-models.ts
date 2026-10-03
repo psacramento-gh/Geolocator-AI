@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import { humanizeModelId, resolveCapabilities } from './capabilities'
+import { isOpenAiVisionModel } from './openai-models'
 import { MODEL_REGISTRY, listProviders, providerLabel } from './registry'
 import type { ModelDefinition, ProviderId } from './types'
 
@@ -89,26 +90,6 @@ async function listGeminiModels(): Promise<ModelDefinition[]> {
   } while (pageToken)
 
   return models.sort((a, b) => a.label.localeCompare(b.label))
-}
-
-function isOpenAiVisionModel(id: string): boolean {
-  const lower = id.toLowerCase()
-  if (
-    /(realtime|audio|transcribe|tts|whisper|dall-e|embedding|moderation|babbage|davinci|instruct|search|image-1|codex|computer-use)/i.test(
-      lower
-    )
-  ) {
-    return false
-  }
-  return (
-    /^gpt-4o/.test(lower) ||
-    /^gpt-4\.1/.test(lower) ||
-    /^gpt-4-turbo/.test(lower) ||
-    /^gpt-4-vision/.test(lower) ||
-    /^chatgpt-4o/.test(lower) ||
-    /^gpt-5/.test(lower) ||
-    /^o[1-9]/.test(lower)
-  )
 }
 
 async function listOpenAiModels(): Promise<ModelDefinition[]> {

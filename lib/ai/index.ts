@@ -1,6 +1,7 @@
 export * from './types'
 export * from './registry'
 export * from './capabilities'
+export * from './openai-models'
 export * from './discover-models'
 export * from './normalize'
 export * from './errors'

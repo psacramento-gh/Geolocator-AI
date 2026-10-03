@@ -1,6 +1,7 @@
 import OpenAI from 'openai'
 import { classifyProviderError } from '../errors'
 import { normalizeGeoLocationResult } from '../normalize'
+import { isOpenAiReasoningModel } from '../openai-models'
 import type { ImageQuality, ModelExecutionResult, ModelRequest, ReasoningLevel, VisionModelProvider } from '../types'
 import { ProviderError } from '../types'
 
@@ -25,17 +26,13 @@ function mapReasoningEffort(level: ReasoningLevel): 'low' | 'medium' | 'high' | 
   return 'medium'
 }
 
-function isReasoningModel(model: string): boolean {
-  return model.startsWith('o1') || model.startsWith('o3') || model.startsWith('o4')
-}
-
 export const openaiProvider: VisionModelProvider = {
   async run(request: ModelRequest): Promise<ModelExecutionResult> {
     const started = Date.now()
     try {
       const client = getClient()
       const dataUrl = `data:${request.mimeType};base64,${request.imageBase64}`
-      const reasoning = isReasoningModel(request.config.model)
+      const reasoning = isOpenAiReasoningModel(request.config.model)
 
       const params: OpenAI.Chat.ChatCompletionCreateParamsNonStreaming = {
         model: request.config.model,

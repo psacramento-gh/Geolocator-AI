@@ -4,7 +4,9 @@ import {
   saveProductionModelConfig,
   resolveCapabilities,
   discoverModels,
+  humanizeModelId,
   listProviders,
+  getModelDefinition,
   type ProviderId,
   type ReasoningLevel,
   type ImageQuality,
@@ -29,18 +31,34 @@ export async function GET() {
       capabilities,
       providers: providerOrder.map((id) => {
         const status = discovered.providers.find((p) => p.id === id)
+        const models = discovered.models
+          .filter((m) => m.provider === id)
+          .map((m) => ({
+            id: m.id,
+            label: m.label,
+            capabilities: m.capabilities,
+          }))
+
+        // Keep the active production model selectable even if discovery omitted it.
+        if (
+          config.provider === id &&
+          config.model &&
+          !models.some((m) => m.id === config.model)
+        ) {
+          const known = getModelDefinition(config.provider, config.model)
+          models.unshift({
+            id: config.model,
+            label: known?.label || humanizeModelId(config.model),
+            capabilities: resolveCapabilities(config.provider, config.model),
+          })
+        }
+
         return {
           id,
           label: status?.label || id,
           source: status?.source,
           error: status?.error,
-          models: discovered.models
-            .filter((m) => m.provider === id)
-            .map((m) => ({
-              id: m.id,
-              label: m.label,
-              capabilities: m.capabilities,
-            })),
+          models,
         }
       }),
     })

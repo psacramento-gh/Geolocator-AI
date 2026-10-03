@@ -1,3 +1,4 @@
+import { isOpenAiReasoningModel } from './openai-models'
 import { getModelDefinition } from './registry'
 import type { ModelCapabilities, ProviderId } from './types'
 
@@ -7,10 +8,6 @@ const DEFAULT_CAPABILITIES: ModelCapabilities = {
   reasoning: false,
   imageQuality: false,
   structuredOutput: true,
-}
-
-function isOpenAiReasoningModel(model: string): boolean {
-  return /^(o[1-9]|o\d)/i.test(model) || model.includes('o1-') || model.includes('o3-') || model.includes('o4-')
 }
 
 /** Infer capabilities for a model id, preferring curated registry entries when present. */
