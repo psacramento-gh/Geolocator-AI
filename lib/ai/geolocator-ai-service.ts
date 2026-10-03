@@ -215,22 +215,17 @@ export async function analyzeLocation(
       }
     }
 
-    const imagePart: {
-      type: 'image'
-      image: Buffer
-      mediaType: string
-      providerOptions?: Record<string, Record<string, unknown>>
-    } = {
-      type: 'image',
+    const imagePart = {
+      type: 'image' as const,
       image: Buffer.from(options.imageBase64, 'base64'),
       mediaType: options.mimeType,
-    }
-
-    // OpenAI image detail must be set on the image part, not request-level options.
-    if (capabilities.imageQuality) {
-      imagePart.providerOptions = {
-        openai: { imageDetail: mapImageQuality(options.config.imageQuality) },
-      }
+      ...(capabilities.imageQuality
+        ? {
+            providerOptions: {
+              openai: { imageDetail: mapImageQuality(options.config.imageQuality) },
+            },
+          }
+        : {}),
     }
 
     const result = await generateObject({
