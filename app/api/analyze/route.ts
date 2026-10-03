@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getGeminiClient, SYSTEM_PROMPT } from '@/lib/gemini'
+import { getProductionModelConfig, runModel, toPublicLocations, ProviderError } from '@/lib/ai'
 
 export const maxDuration = 60
 
@@ -11,32 +11,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing image or mimeType' }, { status: 400 })
     }
 
-    const genAI = getGeminiClient()
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3.1-flash-lite-preview',
-      systemInstruction: SYSTEM_PROMPT,
+    // Snapshot config once at request start so in-flight work is not mixed.
+    const config = await getProductionModelConfig()
+
+    const result = await runModel({
+      config,
+      imageBase64: image,
+      mimeType,
+      source: 'production',
     })
 
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          data: image,
-          mimeType,
-        },
-      },
-      'Analyze this photograph and return the JSON as instructed.',
-    ])
-
-    const text = result.response.text().trim()
-
-    // Strip markdown code fences if present
-    const clean = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-    const parsed = JSON.parse(clean)
-
-    return NextResponse.json(parsed)
+    return NextResponse.json({ locations: toPublicLocations(result.output) })
   } catch (err: unknown) {
-    console.error('[analyze]', err)
-    const message = err instanceof Error ? err.message : 'Analysis failed'
-    return NextResponse.json({ error: message }, { status: 500 })
+    if (err instanceof ProviderError) {
+      return NextResponse.json({ error: 'Analysis failed' }, { status: 500 })
+    }
+    console.error('[analyze]', err instanceof Error ? err.message : 'Analysis failed')
+    return NextResponse.json({ error: 'Analysis failed' }, { status: 500 })
   }
 }

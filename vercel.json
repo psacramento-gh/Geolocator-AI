@@ -3,6 +3,15 @@
   "functions": {
     "app/api/mdk/route.ts": {
       "maxDuration": 60
+    },
+    "app/api/analyze/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/admin/playground/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/admin/benchmarks/run/route.ts": {
+      "maxDuration": 300
     }
   }
 }
