@@ -45,6 +45,8 @@ cp .env.local.example .env.local
 npm run db:push
 ```
 
+Tables are also auto-created on first admin/API database access if they are missing (useful after connecting a fresh Neon database).
+
 The first production request (or opening Production admin) seeds a Gemini production config with the default geolocation prompt.
 
 ### 4. Run locally

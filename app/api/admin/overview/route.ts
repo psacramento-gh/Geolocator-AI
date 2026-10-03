@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { and, gte, sql } from 'drizzle-orm'
-import { getDb } from '@/lib/db'
+import { getReadyDb } from '@/lib/db'
 import { modelUsage } from '@/lib/db/schema'
 import { requireAdminApi } from '@/lib/auth/admin'
 
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
   try {
     const range = req.nextUrl.searchParams.get('range') || '7d'
     const since = rangeStart(range)
-    const db = getDb()
+    const db = await getReadyDb()
 
     const [totals] = await db
       .select({
@@ -85,7 +85,11 @@ export async function GET(req: NextRequest) {
       errorsByModel,
     })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to load overview'
+    const raw = err instanceof Error ? err.message : 'Failed to load overview'
+    // Only rewrite the explicit missing-relation case; keep other DB errors visible.
+    const message = /relation ["'].*["'] does not exist/i.test(raw)
+      ? 'Database tables are missing. Refresh once to auto-create them, or run npm run db:push.'
+      : raw
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }

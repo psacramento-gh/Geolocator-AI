@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { getDb } from '@/lib/db'
+import { getReadyDb } from '@/lib/db'
 import { modelUsage } from '@/lib/db/schema'
 import { classifyProviderError, sanitizeErrorMessage } from './errors'
 import { geminiProvider } from './providers/gemini'
@@ -102,7 +102,7 @@ async function logUsage(args: {
   retryCount: number
 }) {
   try {
-    const db = getDb()
+    const db = await getReadyDb()
     await db.insert(modelUsage).values({
       requestId: args.requestId,
       provider: args.config.provider,

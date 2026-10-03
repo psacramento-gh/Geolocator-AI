@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import { getDb } from '@/lib/db'
+import { getReadyDb } from '@/lib/db'
 import { modelConfigs, type ModelConfigRow } from '@/lib/db/schema'
 import { DEFAULT_GEOLOCATION_PROMPT } from './default-prompt'
 import type {
@@ -28,7 +28,7 @@ export function rowToConfig(row: ModelConfigRow): NormalizedModelConfig {
 }
 
 async function selectProductionRow(): Promise<ModelConfigRow | undefined> {
-  const db = getDb()
+  const db = await getReadyDb()
   const bySlot = await db
     .select()
     .from(modelConfigs)
@@ -49,7 +49,7 @@ export async function ensureProductionConfig(): Promise<NormalizedModelConfig> {
   if (existing) {
     // Backfill singleton slot if an older row only has isProduction.
     if (!existing.productionSlot) {
-      const db = getDb()
+      const db = await getReadyDb()
       await db
         .update(modelConfigs)
         .set({ productionSlot: PRODUCTION_SLOT, isProduction: true, updatedAt: new Date() })
@@ -58,7 +58,7 @@ export async function ensureProductionConfig(): Promise<NormalizedModelConfig> {
     return rowToConfig(existing)
   }
 
-  const db = getDb()
+  const db = await getReadyDb()
   try {
     const [created] = await db
       .insert(modelConfigs)
@@ -109,7 +109,7 @@ export type ProductionConfigUpdate = {
 export async function saveProductionModelConfig(
   update: ProductionConfigUpdate
 ): Promise<NormalizedModelConfig> {
-  const db = getDb()
+  const db = await getReadyDb()
   const current = await selectProductionRow()
 
   if (current) {
