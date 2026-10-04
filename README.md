@@ -1,11 +1,10 @@
 # GeoLocator — AI-Powered Photo Geolocation
 
-Upload a photo, pay **100 sats** via Lightning Network, and a configurable vision model identifies the **top 3 most likely locations** the photo was taken.
+Upload a photo and a configurable vision model identifies the **top 3 most likely locations** the photo was taken.
 
 ## Stack
 
 - **Next.js 16** (App Router)
-- **@moneydevkit/nextjs** — Lightning Network checkout loop
 - **Vercel AI Gateway** — single multimodal inference path (Qwen, Gemini, OpenAI, and other vision models)
 - **Neon Postgres + Drizzle** — production config, usage logs, playground, benchmarks
 - **Vercel Blob** — private benchmark images only
@@ -30,12 +29,12 @@ cp .env.local.example .env.local
 
 | Variable | Purpose |
 |---|---|
-| `MDK_ACCESS_TOKEN` | [moneydevkit.com/dashboard](https://moneydevkit.com/dashboard) |
-| `MDK_MNEMONIC` | Same as above |
 | `AI_GATEWAY_API_KEY` | Optional local/CI Gateway key (OIDC preferred on Vercel) |
 | `ADMIN_SECRET` | Password for `/admin` (server-only) |
 | `DATABASE_URL` | Neon Postgres connection string |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob token (benchmark images) |
+| `IMAGE_GATE_MODEL` | Free vision model for suitability checks |
+| `IMAGE_GATE_FAIL_OPEN` | Continue to geolocation when the gate is unavailable (default: true) |
 
 On Vercel, enable **AI Gateway** for the project and use OIDC (`vercel link` + `vercel env pull` for local). No per-provider API keys are required for the normal Gateway path.
 
@@ -55,13 +54,7 @@ The first production request (or opening Production admin) seeds a Gateway produ
 npm run dev
 ```
 
-For local Lightning payments you need to expose your dev server:
-
-```bash
-ngrok http 3000
-```
-
-Then set your app URL in the [MDK dashboard](https://moneydevkit.com/dashboard) to `https://<your-ngrok-id>.ngrok-free.app`.
+Open [http://localhost:3000](http://localhost:3000), upload a photo, and tap **Analyze photo**.
 
 ## Admin (`/admin`)
 
@@ -82,7 +75,7 @@ All three inference modes (production, playground, benchmark) call the same `ana
 vercel deploy
 ```
 
-Add the environment variables in your Vercel project settings, enable AI Gateway, run `npm run db:push` against the Neon database, and set your app URL in the MDK dashboard.
+Add the environment variables in your Vercel project settings, enable AI Gateway, and run `npm run db:push` against the Neon database.
 
 ## Privacy
 

@@ -59,7 +59,7 @@ export type GpsExif = {
   longitude: number
 }
 
-export type ImageGatePhase = 'pre_checkout' | 'analyze'
+export type ImageGatePhase = 'pre_analyze' | 'analyze'
 
 export type ImageGateStatus = 'accepted' | 'rejected' | 'gate_error'
 

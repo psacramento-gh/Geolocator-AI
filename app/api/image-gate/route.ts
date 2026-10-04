@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     const outcome = await runImageGate({
       imageBase64: image,
       mimeType,
-      phase: 'pre_checkout',
+      phase: 'pre_analyze',
       gpsExif,
     })
 

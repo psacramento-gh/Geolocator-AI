@@ -1,28 +1,72 @@
 'use client'
 
-import { useState } from 'react'
-import { useCheckout } from '@moneydevkit/nextjs'
-import { Zap, Globe, Lock, ScanSearch, Loader2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Zap, Globe, Lock, ScanSearch, Loader2, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 import { PhotoUpload, type ImageReadyPayload } from '@/components/PhotoUpload'
+import { AnalysisResults, type Location } from '@/components/AnalysisResults'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Progress } from '@/components/ui/progress'
 import { ThemeToggle } from '@/components/ThemeToggle'
-import { PENDING_CHECKOUT_ID_KEY } from '@/lib/mdk-checkout'
 import type { ClientGpsExif } from '@/lib/extract-gps-exif'
 
 type GateErrorMessage = { title: string; body: string }
 
+type PageState =
+  | { status: 'idle' }
+  | { status: 'gating' }
+  | { status: 'analyzing' }
+  | { status: 'done'; locations: Location[]; preview: string | null }
+  | { status: 'error'; message: string }
+  | { status: 'rejected'; title: string; body: string }
+
+type ProgressStage = {
+  upTo: number
+  progress: number
+  message: string
+}
+
+const PROGRESS_STAGES: ProgressStage[] = [
+  { upTo: 3, progress: 5, message: 'Uploading image…' },
+  { upTo: 10, progress: 20, message: 'Scanning visual cues…' },
+  { upTo: 20, progress: 40, message: 'Analyzing architecture & infrastructure…' },
+  { upTo: 35, progress: 60, message: 'Synthesizing geographic evidence…' },
+  { upTo: 50, progress: 80, message: 'Calibrating confidence levels…' },
+  { upTo: 60, progress: 92, message: 'Finalizing results…' },
+  { upTo: Infinity, progress: 95, message: 'This is taking longer than expected…' },
+]
+
+function getStage(elapsed: number): ProgressStage {
+  return PROGRESS_STAGES.find((s) => elapsed < s.upTo) ?? PROGRESS_STAGES[PROGRESS_STAGES.length - 1]
+}
+
 export default function HomePage() {
-  const { createCheckout, isLoading } = useCheckout()
   const [imageBase64, setImageBase64] = useState<string | null>(null)
   const [imageMimeType, setImageMimeType] = useState<string>('image/jpeg')
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [gpsExif, setGpsExif] = useState<ClientGpsExif | undefined>(undefined)
   const [gpsExifPresent, setGpsExifPresent] = useState(false)
   const [error, setError] = useState<GateErrorMessage | string | null>(null)
-  const [gating, setGating] = useState(false)
+  const [pageState, setPageState] = useState<PageState>({ status: 'idle' })
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    if (pageState.status === 'analyzing') {
+      setElapsedSeconds(0)
+      intervalRef.current = setInterval(() => {
+        setElapsedSeconds((s) => s + 1)
+      }, 1000)
+    } else if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
+  }, [pageState.status])
 
   const handleImageReady = (payload: ImageReadyPayload) => {
     setImageBase64(payload.base64)
@@ -31,6 +75,7 @@ export default function HomePage() {
     setGpsExifPresent(payload.gpsExifPresent)
     setGpsExif(payload.gpsExif)
     setError(null)
+    setPageState({ status: 'idle' })
   }
 
   const handleClear = () => {
@@ -40,22 +85,19 @@ export default function HomePage() {
     setGpsExif(undefined)
     setGpsExifPresent(false)
     setError(null)
-    sessionStorage.removeItem('pending_image')
-    sessionStorage.removeItem('pending_mime_type')
-    sessionStorage.removeItem('pending_gps_exif')
-    sessionStorage.removeItem('pending_gate_pass')
+    setPageState({ status: 'idle' })
   }
 
-  const handleAnalyze = async () => {
+  const runAnalysis = async () => {
     if (!imageBase64) {
       setError('Please upload a photo first.')
       return
     }
 
     setError(null)
-    setGating(true)
+    setPageState({ status: 'gating' })
 
-    let gatePass: string | null = null
+    let gatePass: string | undefined
 
     try {
       const gateRes = await fetch('/api/image-gate', {
@@ -83,169 +125,226 @@ export default function HomePage() {
                 : 'Geolocator works best with photographs of real places and their surroundings.',
           }
         )
+        setPageState({ status: 'idle' })
         return
       }
 
-      gatePass = typeof gateData.gatePass === 'string' ? gateData.gatePass : null
+      gatePass = typeof gateData.gatePass === 'string' ? gateData.gatePass : undefined
     } catch {
-      // Network failure of the gate → fail open; do not block payment.
-    } finally {
-      setGating(false)
+      // Network failure of the gate → fail open; do not block analysis.
     }
 
-    // Store image in sessionStorage so it survives the checkout redirect
+    setPageState({ status: 'analyzing' })
+
     try {
-      sessionStorage.setItem('pending_image', imageBase64)
-      sessionStorage.setItem('pending_mime_type', imageMimeType)
-      if (gpsExifPresent && gpsExif) {
-        sessionStorage.setItem('pending_gps_exif', JSON.stringify(gpsExif))
-      } else {
-        sessionStorage.removeItem('pending_gps_exif')
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: imageBase64,
+          mimeType: imageMimeType,
+          gpsExif: gpsExifPresent ? gpsExif : undefined,
+          gatePass,
+        }),
+      })
+      const data = await res.json()
+
+      if (!res.ok) {
+        if (data.code === 'IMAGE_REJECTED') {
+          setPageState({
+            status: 'rejected',
+            title: data.title || "This doesn't appear to be a suitable real-world photo",
+            body: data.error ?? 'This photo is not suitable for analysis.',
+          })
+          return
+        }
+        throw new Error(data.error ?? 'Analysis failed')
       }
-      if (gatePass) {
-        sessionStorage.setItem('pending_gate_pass', gatePass)
-      } else {
-        sessionStorage.removeItem('pending_gate_pass')
-      }
-    } catch {
-      setError('Your photo is too large to process. Please try a smaller image.')
-      return
+
+      setPageState({
+        status: 'done',
+        locations: data.locations,
+        preview: imagePreview,
+      })
+    } catch (err) {
+      setPageState({
+        status: 'error',
+        message: err instanceof Error ? err.message : 'Analysis failed',
+      })
     }
-
-    const result = await createCheckout({
-      type: 'AMOUNT',
-      title: 'GeoLocator — AI Photo Analysis',
-      description: 'AI-powered geolocation analysis of your photo using Gemini 3.1 Flash Lite Preview',
-      amount: 100,
-      currency: 'SAT',
-      successUrl: '/checkout/success',
-    })
-
-    if (result.error) {
-      sessionStorage.removeItem('pending_image')
-      sessionStorage.removeItem('pending_mime_type')
-      sessionStorage.removeItem('pending_gps_exif')
-      sessionStorage.removeItem('pending_gate_pass')
-      setError(result.error.message)
-      return
-    }
-
-    const checkoutId = result.data.checkoutUrl.split('/').filter(Boolean).pop()
-    if (checkoutId) {
-      sessionStorage.setItem(PENDING_CHECKOUT_ID_KEY, checkoutId)
-    }
-
-    window.location.href = result.data.checkoutUrl
   }
 
-  const busy = isLoading || gating
+  const busy = pageState.status === 'gating' || pageState.status === 'analyzing'
+  const currentStage = getStage(elapsedSeconds)
+  const showingResults =
+    pageState.status === 'done' ||
+    pageState.status === 'analyzing' ||
+    pageState.status === 'error' ||
+    pageState.status === 'rejected'
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
       <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <ScanSearch className="h-5 w-5 text-primary" />
             <span className="font-semibold text-base">GeoLocator</span>
-            <Badge variant="outline" className="text-xs hidden sm:inline-flex">AI</Badge>
+            <Badge variant="outline" className="text-xs hidden sm:inline-flex">
+              AI
+            </Badge>
           </Link>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Zap className="h-3.5 w-3.5 text-amber-500" />
-              <span>100 sats per analysis</span>
-            </div>
-            <ThemeToggle />
-          </div>
+          <ThemeToggle />
         </div>
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-10 space-y-8">
-        {/* Hero */}
-        <div className="text-center space-y-3">
-          <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-1.5 text-sm font-medium text-primary">
-            <Globe className="h-4 w-4" />
-            Geospatial Intelligence
-          </div>
-          <h1 className="text-3xl sm:text-4xl font-bold tracking-tight">
-            Where was this photo taken?
-          </h1>
-          <p className="text-muted-foreground text-base max-w-xl mx-auto">
-            Upload any photo and our AI analyst identifies the top 3 most likely locations using
-            architecture, vegetation, infrastructure, text, and climate cues.
-          </p>
-        </div>
-
-        {/* Upload */}
-        <PhotoUpload
-          onImageReady={handleImageReady}
-          onClear={handleClear}
-          preview={imagePreview}
-          disabled={busy}
-        />
-
-        {/* Error / rejection (unified gate copy) */}
-        {error && (
-          <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
-            {typeof error === 'string' ? (
-              <p>{error}</p>
-            ) : (
-              <>
-                <p className="font-medium mb-1">{error.title}</p>
-                <p>{error.body}</p>
-              </>
+        {showingResults ? (
+          <>
+            {pageState.status === 'analyzing' && (
+              <CenteredMessage>
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="text-base font-medium">{currentStage.message}</p>
+                <Progress value={currentStage.progress} className="w-64" />
+                <p className="text-sm text-muted-foreground">
+                  {elapsedSeconds}s elapsed
+                  {elapsedSeconds < 60 && ' · up to 60 seconds'}
+                </p>
+              </CenteredMessage>
             )}
-            {imageBase64 ? (
-              <button
-                type="button"
-                onClick={handleClear}
-                className="mt-2 text-sm font-medium underline underline-offset-2"
-              >
-                Choose another photo
-              </button>
-            ) : null}
-          </div>
+
+            {pageState.status === 'done' && (
+              <div className="space-y-8">
+                <AnalysisResults
+                  locations={pageState.locations}
+                  imagePreview={pageState.preview}
+                />
+                <Button
+                  variant="outline"
+                  className="w-full gap-2 no-print"
+                  onClick={handleClear}
+                >
+                  Analyze another photo
+                </Button>
+              </div>
+            )}
+
+            {pageState.status === 'error' && (
+              <CenteredMessage>
+                <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-6 py-4 text-sm text-destructive text-center max-w-sm">
+                  <p className="font-medium mb-1">Something went wrong</p>
+                  <p>{pageState.message}</p>
+                </div>
+                <div className="flex gap-3">
+                  <Button variant="outline" size="sm" onClick={handleClear}>
+                    Choose another photo
+                  </Button>
+                  <Button size="sm" onClick={runAnalysis}>
+                    <RefreshCw className="h-4 w-4 mr-1" />
+                    Retry
+                  </Button>
+                </div>
+              </CenteredMessage>
+            )}
+
+            {pageState.status === 'rejected' && (
+              <CenteredMessage>
+                <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-6 py-4 text-sm text-destructive text-center max-w-sm">
+                  <p className="font-medium mb-1">{pageState.title}</p>
+                  <p>{pageState.body}</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={handleClear}>
+                  Choose another photo
+                </Button>
+              </CenteredMessage>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="text-center space-y-3">
+              <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-4 py-1.5 text-sm font-medium text-primary">
+                <Globe className="h-4 w-4" />
+                Geospatial Intelligence
+              </div>
+              <h1 className="text-3xl sm:text-4xl font-bold tracking-tight">
+                Where was this photo taken?
+              </h1>
+              <p className="text-muted-foreground text-base max-w-xl mx-auto">
+                Upload any photo and our AI analyst identifies the top 3 most likely locations
+                using architecture, vegetation, infrastructure, text, and climate cues.
+              </p>
+            </div>
+
+            <PhotoUpload
+              onImageReady={handleImageReady}
+              onClear={handleClear}
+              preview={imagePreview}
+              disabled={busy}
+            />
+
+            {error && (
+              <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
+                {typeof error === 'string' ? (
+                  <p>{error}</p>
+                ) : (
+                  <>
+                    <p className="font-medium mb-1">{error.title}</p>
+                    <p>{error.body}</p>
+                  </>
+                )}
+                {imageBase64 ? (
+                  <button
+                    type="button"
+                    onClick={handleClear}
+                    className="mt-2 text-sm font-medium underline underline-offset-2"
+                  >
+                    Choose another photo
+                  </button>
+                ) : null}
+              </div>
+            )}
+
+            <Button
+              onClick={runAnalysis}
+              disabled={!imageBase64 || busy}
+              size="lg"
+              className="w-full gap-2 text-base"
+            >
+              {pageState.status === 'gating' ? (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Checking photo…
+                </>
+              ) : (
+                <>
+                  <ScanSearch className="h-5 w-5" />
+                  Analyze photo
+                </>
+              )}
+            </Button>
+
+            <div className="grid grid-cols-3 gap-3 text-center">
+              {[
+                { icon: Lock, title: 'Private', desc: 'Images never stored on our servers' },
+                { icon: Zap, title: 'Fast results', desc: 'Results in under a minute' },
+                {
+                  icon: Globe,
+                  title: 'Powered by Gemini',
+                  desc: 'Google Gemini 3.1 Flash Lite Preview',
+                },
+              ].map(({ icon: Icon, title, desc }) => (
+                <Card key={title} className="bg-muted/30">
+                  <CardContent className="p-4 space-y-1">
+                    <Icon className="h-5 w-5 mx-auto text-muted-foreground" />
+                    <p className="text-xs font-semibold">{title}</p>
+                    <p className="text-xs text-muted-foreground">{desc}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </>
         )}
-
-        {/* CTA */}
-        <Button
-          onClick={handleAnalyze}
-          disabled={!imageBase64 || busy}
-          size="lg"
-          className="w-full gap-2 text-base"
-        >
-          {gating ? (
-            <>
-              <Loader2 className="h-5 w-5 animate-spin" />
-              Checking photo…
-            </>
-          ) : (
-            <>
-              <Zap className="h-5 w-5" />
-              {isLoading ? 'Creating invoice…' : 'Analyze for 100 sats'}
-            </>
-          )}
-        </Button>
-
-        {/* Trust row */}
-        <div className="grid grid-cols-3 gap-3 text-center">
-          {[
-            { icon: Lock, title: 'Private', desc: 'Images never stored on our servers' },
-            { icon: Zap, title: 'Lightning fast', desc: 'Instant payment, instant results' },
-            { icon: Globe, title: 'Powered by Gemini', desc: 'Google Gemini 3.1 Flash Lite Preview' },
-          ].map(({ icon: Icon, title, desc }) => (
-            <Card key={title} className="bg-muted/30">
-              <CardContent className="p-4 space-y-1">
-                <Icon className="h-5 w-5 mx-auto text-muted-foreground" />
-                <p className="text-xs font-semibold">{title}</p>
-                <p className="text-xs text-muted-foreground">{desc}</p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
       </main>
 
-      {/* Footer */}
       <footer className="border-t mt-8">
         <div className="max-w-3xl mx-auto px-4 h-12 flex items-center justify-center">
           <a
@@ -261,6 +360,14 @@ export default function HomePage() {
           </a>
         </div>
       </footer>
+    </div>
+  )
+}
+
+function CenteredMessage({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-4 py-24 text-center">
+      {children}
     </div>
   )
 }

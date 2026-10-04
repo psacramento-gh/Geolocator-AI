@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
 
     const failOpen = isImageGateFailOpen()
 
-    // Prefer reusing a signed pre-checkout decision so paid users are not
+    // Prefer reusing a signed pre-analyze decision so users are not
     // re-subjected to a nondeterministic semantic re-evaluation.
     let reusedRequestId: string | null = null
     let gpsExifPresent = Boolean(gpsExif)
@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
         status: pass.status === 'gate_error' ? 'gate_error' : 'accepted',
         result: null,
         latencyMs: 0,
-        gateError: pass.status === 'gate_error' ? 'reused_pre_checkout_pass' : null,
+        gateError: pass.status === 'gate_error' ? 'reused_pre_analyze_pass' : null,
         gpsExifPresent,
         gpsExif: resolvedGps,
         contentHash: det.contentHash,
