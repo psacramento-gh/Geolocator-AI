@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'crypto'
 import type { ImageGateStatus } from './types'
 
-/** How long a pre-checkout gate pass remains valid through Lightning payment. */
+/** How long a pre-analyze gate pass remains valid for reuse on /api/analyze. */
 export const GATE_PASS_TTL_MS = 2 * 60 * 60 * 1000
 
 export type GatePassPayload = {
@@ -32,8 +32,8 @@ function sign(data: string, secret: string): string {
 }
 
 /**
- * Issue a signed gate pass so /api/analyze can reuse the pre-checkout decision
- * without re-running the nondeterministic semantic gate after payment.
+ * Issue a signed gate pass so /api/analyze can reuse the pre-analyze decision
+ * without re-running the nondeterministic semantic gate.
  */
 export function issueGatePass(args: {
   requestId: string
@@ -97,7 +97,7 @@ export function verifyGatePass(
   return payload
 }
 
-/** Whether a gate outcome should continue to checkout / geolocation. */
+/** Whether a gate outcome should continue to geolocation. */
 export function shouldProceedAfterGate(status: ImageGateStatus, failOpen: boolean): boolean {
   if (status === 'accepted') return true
   if (status === 'rejected') return false

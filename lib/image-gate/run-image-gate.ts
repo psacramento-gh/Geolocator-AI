@@ -284,7 +284,7 @@ export async function runImageGate(options: RunImageGateOptions): Promise<ImageG
         contentHash: det.contentHash,
         phase: options.phase,
       })
-      // Record only on analyze so abandoned pre-checkout accepts don't block retries.
+      // Record only on analyze so abandoned pre-analyze accepts don't block retries.
       if (options.phase === 'analyze') {
         await recordContentHash(det.contentHash)
       }

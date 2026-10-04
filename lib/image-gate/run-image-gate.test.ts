@@ -51,7 +51,7 @@ describe('runImageGate', () => {
     const outcome = await runImageGate({
       imageBase64: Buffer.from('nope').toString('base64'),
       mimeType: 'image/jpeg',
-      phase: 'pre_checkout',
+      phase: 'pre_analyze',
     })
     expect(outcome.status).toBe('rejected')
     expect(generateObject).not.toHaveBeenCalled()
@@ -77,7 +77,7 @@ describe('runImageGate', () => {
     const outcome = await runImageGate({
       imageBase64: toBase64(buf),
       mimeType: 'image/png',
-      phase: 'pre_checkout',
+      phase: 'pre_analyze',
     })
 
     expect(outcome.status).toBe('accepted')
@@ -120,7 +120,7 @@ describe('runImageGate', () => {
     const outcome = await runImageGate({
       imageBase64: toBase64(buf),
       mimeType: 'image/png',
-      phase: 'pre_checkout',
+      phase: 'pre_analyze',
     })
 
     expect(outcome.status).toBe('gate_error')
@@ -147,7 +147,7 @@ describe('runImageGate', () => {
     await runImageGate({
       imageBase64: toBase64(buf),
       mimeType: 'image/png',
-      phase: 'pre_checkout',
+      phase: 'pre_analyze',
     })
 
     expect(vi.mocked(generateObject).mock.calls[0][0].model).toBe(
