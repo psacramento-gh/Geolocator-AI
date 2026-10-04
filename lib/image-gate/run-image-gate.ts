@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { generateObject } from 'ai'
 import { getImageGateModelConfig, isImageGateFailOpen } from '@/lib/ai/config'
 import { classifyGatewayError, sanitizeErrorMessage } from '@/lib/ai/errors'
+import { DEFAULT_IMAGE_GATE_MODEL_ID } from '@/lib/ai/registry'
 import {
   isDuplicateContentHash,
   recordContentHash,
@@ -19,6 +20,12 @@ import type {
   ImageGateResult,
   RunImageGateOptions,
 } from './types'
+
+function configuredGateModelFallback(): string {
+  const fromEnv = process.env.IMAGE_GATE_MODEL?.trim()
+  if (fromEnv && fromEnv.includes('/')) return fromEnv
+  return DEFAULT_IMAGE_GATE_MODEL_ID
+}
 
 function normalizeGpsExif(input: GpsExif | null | undefined): {
   gpsExifPresent: boolean
@@ -77,15 +84,15 @@ export async function runImageGate(options: RunImageGateOptions): Promise<ImageG
   const requestId = options.requestId || randomUUID()
   const started = Date.now()
   const { gpsExifPresent, gpsExif } = normalizeGpsExif(options.gpsExif)
-  const config = await getImageGateModelConfig()
-  const model = config.modelId
 
+  // Cheap deterministic checks before any DB/config/model work.
   const det = runDeterministicChecks({
     imageBase64: options.imageBase64,
     mimeType: options.mimeType,
   })
 
   if (!det.ok) {
+    const model = configuredGateModelFallback()
     const latencyMs = Date.now() - started
     const outcome = rejectedOutcome({
       requestId,
@@ -125,6 +132,7 @@ export async function runImageGate(options: RunImageGateOptions): Promise<ImageG
   if (!options.skipDuplicateCheck) {
     const dup = await isDuplicateContentHash(det.contentHash)
     if (dup) {
+      const model = configuredGateModelFallback()
       const latencyMs = Date.now() - started
       const outcome = rejectedOutcome({
         requestId,
@@ -161,6 +169,63 @@ export async function runImageGate(options: RunImageGateOptions): Promise<ImageG
       return outcome
     }
   }
+
+  let config
+  try {
+    config = await getImageGateModelConfig()
+  } catch (err) {
+    const model = configuredGateModelFallback()
+    const gateError = sanitizeErrorMessage(
+      err instanceof Error ? err.message : 'Failed to load image gate config'
+    )
+    const latencyMs = Date.now() - started
+    console.error(`[image_gate:${model}]`, gateError)
+    await logImageGateEvent({
+      requestId,
+      model,
+      status: 'gate_error',
+      result: null,
+      latencyMs,
+      gateError,
+      gpsExifPresent,
+      gpsExif,
+      contentHash: det.contentHash,
+      phase: options.phase,
+    })
+    if (isImageGateFailOpen()) {
+      return {
+        status: 'gate_error',
+        requestId,
+        model,
+        latencyMs,
+        result: null,
+        gateError,
+        gpsExifPresent,
+        gpsExif,
+        contentHash: det.contentHash,
+        rejectionReason: null,
+        userMessage: null,
+      }
+    }
+    return {
+      status: 'gate_error',
+      requestId,
+      model,
+      latencyMs,
+      result: null,
+      gateError,
+      gpsExifPresent,
+      gpsExif,
+      contentHash: det.contentHash,
+      rejectionReason: null,
+      userMessage: {
+        title: 'Gate unavailable',
+        body: 'Photo checking is temporarily unavailable. Please try again shortly.',
+      },
+    }
+  }
+
+  const model = config.modelId
 
   try {
     const imagePart = {
