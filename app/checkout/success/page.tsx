@@ -89,6 +89,7 @@ export default function SuccessPage() {
     const imageBase64 = sessionStorage.getItem('pending_image')
     const mimeType = sessionStorage.getItem('pending_mime_type') ?? 'image/jpeg'
     const gpsRaw = sessionStorage.getItem('pending_gps_exif')
+    const gatePass = sessionStorage.getItem('pending_gate_pass') || undefined
     const preview = imageBase64 ? `data:${mimeType};base64,${imageBase64}` : null
 
     let gpsExif: { latitude: number; longitude: number } | undefined
@@ -118,7 +119,7 @@ export default function SuccessPage() {
     fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageBase64, mimeType, gpsExif }),
+      body: JSON.stringify({ image: imageBase64, mimeType, gpsExif, gatePass }),
     })
       .then(async (res) => {
         const data = await res.json()
@@ -140,6 +141,7 @@ export default function SuccessPage() {
         sessionStorage.removeItem('pending_image')
         sessionStorage.removeItem('pending_mime_type')
         sessionStorage.removeItem('pending_gps_exif')
+        sessionStorage.removeItem('pending_gate_pass')
         setPageState({ status: 'done', locations: data.locations, preview })
       })
       .catch((err: Error & { code?: string; title?: string }) => {
@@ -221,6 +223,7 @@ export default function SuccessPage() {
                 sessionStorage.removeItem('pending_image')
                 sessionStorage.removeItem('pending_mime_type')
                 sessionStorage.removeItem('pending_gps_exif')
+                sessionStorage.removeItem('pending_gate_pass')
                 router.push('/')
               }}
             >

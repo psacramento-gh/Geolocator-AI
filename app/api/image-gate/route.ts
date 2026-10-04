@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { runImageGate, type GpsExif } from '@/lib/image-gate'
+import { isImageGateFailOpen } from '@/lib/ai/config'
+import {
+  issueGatePass,
+  runImageGate,
+  shouldProceedAfterGate,
+  type GpsExif,
+} from '@/lib/image-gate'
 
 export const maxDuration = 30
 
@@ -13,6 +19,8 @@ function parseGpsExif(raw: unknown): GpsExif | null {
 }
 
 export async function POST(req: NextRequest) {
+  const failOpen = isImageGateFailOpen()
+
   try {
     const body = await req.json()
     const image = body.image as string | undefined
@@ -30,26 +38,65 @@ export async function POST(req: NextRequest) {
       gpsExif,
     })
 
-    return NextResponse.json({
-      status: outcome.status,
-      requestId: outcome.requestId,
-      gpsExifPresent: outcome.gpsExifPresent,
-      gpsExif: outcome.gpsExif,
-      userMessage: outcome.userMessage,
-      rejectionReason: outcome.rejectionReason,
-      // Lightweight fields for client logging / future UX — no model jargon required.
-      accepted: outcome.status === 'accepted' || outcome.status === 'gate_error',
-    })
+    const proceed = shouldProceedAfterGate(outcome.status, failOpen)
+
+    let gatePass: string | null = null
+    if (
+      proceed &&
+      outcome.contentHash &&
+      (outcome.status === 'accepted' || outcome.status === 'gate_error')
+    ) {
+      gatePass = issueGatePass({
+        requestId: outcome.requestId,
+        contentHash: outcome.contentHash,
+        status: outcome.status,
+      })
+    }
+
+    const statusCode =
+      outcome.status === 'rejected' ? 400 : !proceed && outcome.status === 'gate_error' ? 503 : 200
+
+    return NextResponse.json(
+      {
+        status: outcome.status,
+        requestId: outcome.requestId,
+        gpsExifPresent: outcome.gpsExifPresent,
+        gpsExif: outcome.gpsExif,
+        userMessage: outcome.userMessage,
+        rejectionReason: outcome.rejectionReason,
+        accepted: proceed,
+        gatePass,
+      },
+      { status: statusCode }
+    )
   } catch (err) {
     console.error('[image-gate]', err instanceof Error ? err.message : 'Gate failed')
-    // Fail open at the HTTP boundary too — never claim the image is unsuitable.
-    return NextResponse.json({
-      status: 'gate_error',
-      accepted: true,
-      requestId: null,
-      gpsExifPresent: false,
-      userMessage: null,
-      rejectionReason: null,
-    })
+    // Never claim the image is unsuitable on infrastructure failure.
+    if (failOpen) {
+      return NextResponse.json({
+        status: 'gate_error',
+        accepted: true,
+        requestId: null,
+        gpsExifPresent: false,
+        userMessage: null,
+        rejectionReason: null,
+        gatePass: null,
+      })
+    }
+    return NextResponse.json(
+      {
+        status: 'gate_error',
+        accepted: false,
+        requestId: null,
+        gpsExifPresent: false,
+        userMessage: {
+          title: 'Gate unavailable',
+          body: 'Photo checking is temporarily unavailable. Please try again shortly.',
+        },
+        rejectionReason: null,
+        gatePass: null,
+      },
+      { status: 503 }
+    )
   }
 }

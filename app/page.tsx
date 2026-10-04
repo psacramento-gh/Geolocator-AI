@@ -43,6 +43,7 @@ export default function HomePage() {
     sessionStorage.removeItem('pending_image')
     sessionStorage.removeItem('pending_mime_type')
     sessionStorage.removeItem('pending_gps_exif')
+    sessionStorage.removeItem('pending_gate_pass')
   }
 
   const handleAnalyze = async () => {
@@ -53,6 +54,8 @@ export default function HomePage() {
 
     setError(null)
     setGating(true)
+
+    let gatePass: string | null = null
 
     try {
       const gateRes = await fetch('/api/image-gate', {
@@ -66,16 +69,24 @@ export default function HomePage() {
       })
       const gateData = await gateRes.json()
 
-      if (gateData.status === 'rejected') {
+      // `accepted` honors IMAGE_GATE_FAIL_OPEN — gate_error only proceeds when fail-open is on.
+      if (!gateData.accepted) {
         setError(
           gateData.userMessage || {
-            title: "This doesn't appear to be a suitable real-world photo",
-            body: 'Geolocator works best with photographs of real places and their surroundings.',
+            title:
+              gateData.status === 'gate_error'
+                ? 'Gate unavailable'
+                : "This doesn't appear to be a suitable real-world photo",
+            body:
+              gateData.status === 'gate_error'
+                ? 'Photo checking is temporarily unavailable. Please try again shortly.'
+                : 'Geolocator works best with photographs of real places and their surroundings.',
           }
         )
         return
       }
-      // accepted or gate_error → continue to checkout (fail-open)
+
+      gatePass = typeof gateData.gatePass === 'string' ? gateData.gatePass : null
     } catch {
       // Network failure of the gate → fail open; do not block payment.
     } finally {
@@ -90,6 +101,11 @@ export default function HomePage() {
         sessionStorage.setItem('pending_gps_exif', JSON.stringify(gpsExif))
       } else {
         sessionStorage.removeItem('pending_gps_exif')
+      }
+      if (gatePass) {
+        sessionStorage.setItem('pending_gate_pass', gatePass)
+      } else {
+        sessionStorage.removeItem('pending_gate_pass')
       }
     } catch {
       setError('Your photo is too large to process. Please try a smaller image.')
@@ -109,6 +125,7 @@ export default function HomePage() {
       sessionStorage.removeItem('pending_image')
       sessionStorage.removeItem('pending_mime_type')
       sessionStorage.removeItem('pending_gps_exif')
+      sessionStorage.removeItem('pending_gate_pass')
       setError(result.error.message)
       return
     }
