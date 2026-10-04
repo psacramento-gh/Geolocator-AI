@@ -231,5 +231,45 @@ async function createSchema(): Promise<void> {
 
     txn`ALTER TABLE benchmark_results ADD COLUMN IF NOT EXISTS model_id varchar(256)`,
     txn`ALTER TABLE benchmark_results ADD COLUMN IF NOT EXISTS gateway_provider varchar(128)`,
+
+    txn`
+      CREATE TABLE IF NOT EXISTS image_gate_hashes (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        content_hash varchar(64) NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `,
+    txn`
+      CREATE INDEX IF NOT EXISTS image_gate_hashes_hash_created_idx
+      ON image_gate_hashes (content_hash, created_at)
+    `,
+
+    txn`
+      CREATE TABLE IF NOT EXISTS image_gate_events (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        request_id varchar(64) NOT NULL,
+        model varchar(256) NOT NULL,
+        accepted boolean,
+        image_type varchar(64),
+        scene_type varchar(64),
+        image_quality varchar(32),
+        environment_context varchar(32),
+        potential_clues jsonb,
+        synthetic_likelihood varchar(32),
+        rejection_reason varchar(64),
+        latency_ms integer,
+        gate_error text,
+        gps_exif_present boolean NOT NULL DEFAULT false,
+        gps_latitude double precision,
+        gps_longitude double precision,
+        content_hash varchar(64),
+        phase varchar(32) NOT NULL DEFAULT 'analyze',
+        created_at timestamptz NOT NULL DEFAULT now()
+      )
+    `,
+    txn`
+      CREATE INDEX IF NOT EXISTS image_gate_events_created_idx
+      ON image_gate_events (created_at)
+    `,
   ])
 }

@@ -94,9 +94,18 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
     enabled: true,
     capabilities: { ...VISION_STRUCTURED },
   },
+  {
+    id: 'inclusionai/ling-3.0-flash-vl-free',
+    label: 'Ling 3.0 Flash VL Free',
+    enabled: true,
+    capabilities: { ...VISION_STRUCTURED },
+  },
 ]
 
 export const DEFAULT_PRODUCTION_MODEL_ID = 'google/gemini-3.1-flash-lite'
+
+/** Default free vision model for the pre-inference Image Gate. */
+export const DEFAULT_IMAGE_GATE_MODEL_ID = 'inclusionai/ling-3.0-flash-vl-free'
 
 /** Default models pre-selected in playground / benchmarks when available. */
 export const DEFAULT_COMPARE_MODEL_IDS = [
@@ -155,6 +164,8 @@ export function providerLabel(provider: string): string {
       return 'Alibaba / Qwen'
     case 'anthropic':
       return 'Anthropic'
+    case 'inclusionai':
+      return 'InclusionAI'
     default:
       return provider.charAt(0).toUpperCase() + provider.slice(1)
   }

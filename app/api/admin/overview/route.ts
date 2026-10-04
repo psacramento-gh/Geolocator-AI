@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { and, eq, gte, sql } from 'drizzle-orm'
+import { and, eq, gte, isNotNull, sql } from 'drizzle-orm'
 import { getReadyDb } from '@/lib/db'
-import { modelUsage } from '@/lib/db/schema'
+import { imageGateEvents, modelUsage } from '@/lib/db/schema'
 import { requireAdminApi } from '@/lib/auth/admin'
 
 function rangeStart(range: string): Date {
@@ -79,6 +79,54 @@ export async function GET(req: NextRequest) {
       .groupBy(modelUsage.modelId, modelUsage.provider, modelUsage.model, modelUsage.errorType)
       .orderBy(sql`count(*) desc`)
 
+    const gateSince = gte(imageGateEvents.createdAt, since)
+
+    const [gateTotals] = await db
+      .select({
+        total: sql<number>`count(*)::int`,
+        accepted: sql<number>`count(*) filter (where ${imageGateEvents.accepted} = true)::int`,
+        rejected: sql<number>`count(*) filter (where ${imageGateEvents.accepted} = false)::int`,
+        errors: sql<number>`count(*) filter (where ${imageGateEvents.accepted} is null)::int`,
+        avgLatency: sql<number>`coalesce(avg(${imageGateEvents.latencyMs}), 0)::float`,
+      })
+      .from(imageGateEvents)
+      .where(gateSince)
+
+    const rejectionBreakdown = await db
+      .select({
+        rejectionReason: imageGateEvents.rejectionReason,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(imageGateEvents)
+      .where(
+        and(
+          gateSince,
+          eq(imageGateEvents.accepted, false),
+          isNotNull(imageGateEvents.rejectionReason)
+        )
+      )
+      .groupBy(imageGateEvents.rejectionReason)
+      .orderBy(sql`count(*) desc`)
+
+    const gateByModel = await db
+      .select({
+        model: imageGateEvents.model,
+        requests: sql<number>`count(*)::int`,
+        accepted: sql<number>`count(*) filter (where ${imageGateEvents.accepted} = true)::int`,
+        rejected: sql<number>`count(*) filter (where ${imageGateEvents.accepted} = false)::int`,
+        errors: sql<number>`count(*) filter (where ${imageGateEvents.accepted} is null)::int`,
+        avgLatency: sql<number>`coalesce(avg(${imageGateEvents.latencyMs}), 0)::float`,
+      })
+      .from(imageGateEvents)
+      .where(gateSince)
+      .groupBy(imageGateEvents.model)
+      .orderBy(sql`count(*) desc`)
+
+    const gateTotal = gateTotals?.total ?? 0
+    const gateRejected = gateTotals?.rejected ?? 0
+    const gateErrors = gateTotals?.errors ?? 0
+    const gateAccepted = gateTotals?.accepted ?? 0
+
     return NextResponse.json({
       range,
       since: since.toISOString(),
@@ -97,6 +145,17 @@ export async function GET(req: NextRequest) {
       },
       byModel,
       errorsByModel,
+      imageGate: {
+        totalRequests: gateTotal,
+        accepted: gateAccepted,
+        rejected: gateRejected,
+        errors: gateErrors,
+        passRate: gateTotal > 0 ? (gateAccepted / gateTotal) * 100 : 0,
+        errorRate: gateTotal > 0 ? (gateErrors / gateTotal) * 100 : 0,
+        avgLatencyMs: gateTotals?.avgLatency ?? 0,
+        rejectionBreakdown,
+        byModel: gateByModel,
+      },
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to load overview'

@@ -5,10 +5,19 @@ import { Upload, ImageIcon, X, Link, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { compressImageBlob } from '@/lib/compress-image'
+import { extractGpsExif, type ClientGpsExif } from '@/lib/extract-gps-exif'
 import { cn } from '@/lib/utils'
 
+export type ImageReadyPayload = {
+  base64: string
+  mimeType: string
+  preview: string
+  gpsExifPresent: boolean
+  gpsExif?: ClientGpsExif
+}
+
 interface PhotoUploadProps {
-  onImageReady: (base64: string, mimeType: string, preview: string) => void
+  onImageReady: (payload: ImageReadyPayload) => void
   onClear: () => void
   preview: string | null
   disabled?: boolean
@@ -26,8 +35,16 @@ export function PhotoUpload({ onImageReady, onClear, preview, disabled }: PhotoU
   const processFile = useCallback(
     async (file: File) => {
       if (!file.type.startsWith('image/')) return
+      // EXIF must be read before canvas compression strips metadata.
+      const gps = await extractGpsExif(file)
       const { base64, mimeType, preview } = await compressImageBlob(file)
-      onImageReady(base64, mimeType, preview)
+      onImageReady({
+        base64,
+        mimeType,
+        preview,
+        gpsExifPresent: gps.gpsExifPresent,
+        gpsExif: gps.gpsExif,
+      })
     },
     [onImageReady]
   )
@@ -83,8 +100,15 @@ export function PhotoUpload({ onImageReady, onClear, preview, disabled }: PhotoU
         return
       }
       const blob = await response.blob()
+      const gps = await extractGpsExif(blob)
       const { base64, mimeType, preview } = await compressImageBlob(blob)
-      onImageReady(base64, mimeType, preview)
+      onImageReady({
+        base64,
+        mimeType,
+        preview,
+        gpsExifPresent: gps.gpsExifPresent,
+        gpsExif: gps.gpsExif,
+      })
     } catch (err) {
       if (err instanceof TypeError) {
         // Network/CORS errors surface as TypeError in fetch

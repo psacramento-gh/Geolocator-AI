@@ -26,6 +26,15 @@ type ProductionPayload = {
     responseFormat: string
   }
   capabilities: ModelCapabilities
+  imageGate?: {
+    config: {
+      modelId: string
+      prompt: string
+      temperature: number
+      maxOutputTokens: number
+    }
+    capabilities: ModelCapabilities
+  }
   models: ModelOption[]
   discovery?: { source: string; error?: string }
 }
@@ -45,6 +54,14 @@ export default function ProductionAdminPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
+  const [gateModelId, setGateModelId] = useState('')
+  const [gatePrompt, setGatePrompt] = useState('')
+  const [gateTemperature, setGateTemperature] = useState(0.1)
+  const [gateMaxOutputTokens, setGateMaxOutputTokens] = useState(400)
+  const [gateStatus, setGateStatus] = useState('')
+  const [gateError, setGateError] = useState('')
+  const [gateSaving, setGateSaving] = useState(false)
+
   useEffect(() => {
     fetch('/api/admin/production')
       .then(async (res) => {
@@ -58,6 +75,12 @@ export default function ProductionAdminPage() {
         setReasoningLevel(json.config.reasoningLevel)
         setImageQuality(json.config.imageQuality)
         setCapabilities(json.capabilities)
+        if (json.imageGate?.config) {
+          setGateModelId(json.imageGate.config.modelId)
+          setGatePrompt(json.imageGate.config.prompt)
+          setGateTemperature(json.imageGate.config.temperature)
+          setGateMaxOutputTokens(json.imageGate.config.maxOutputTokens)
+        }
         if (json.discovery?.source === 'fallback') {
           setDiscoveryNote(
             json.discovery.error
@@ -95,6 +118,7 @@ export default function ProductionAdminPage() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          target: 'production',
           modelId,
           prompt,
           temperature,
@@ -111,6 +135,33 @@ export default function ProductionAdminPage() {
       setError(err instanceof Error ? err.message : 'Save failed')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function onSaveGate(e: FormEvent) {
+    e.preventDefault()
+    setGateSaving(true)
+    setGateStatus('')
+    setGateError('')
+    try {
+      const res = await fetch('/api/admin/production', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target: 'image_gate',
+          modelId: gateModelId,
+          prompt: gatePrompt,
+          temperature: gateTemperature,
+          maxOutputTokens: gateMaxOutputTokens,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Save failed')
+      setGateStatus('Image Gate configuration saved.')
+    } catch (err) {
+      setGateError(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setGateSaving(false)
     }
   }
 
@@ -131,7 +182,67 @@ export default function ProductionAdminPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Production model</CardTitle>
+          <CardTitle className="text-base">Image Gate Model</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Free vision model used to check photo suitability before the paid geolocation model.
+            Prefer the free Ling route; do not silently fall back to a paid gate model.
+          </p>
+          <form onSubmit={onSaveGate} className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Model">
+                <Select value={gateModelId} onChange={(e) => setGateModelId(e.target.value)}>
+                  {models.map((m) => (
+                    <option key={`gate-${m.id}`} value={m.id}>
+                      {m.label} ({m.id})
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Temperature">
+                <Input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="2"
+                  value={gateTemperature}
+                  onChange={(e) => setGateTemperature(Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Max output tokens">
+                <Input
+                  type="number"
+                  min="100"
+                  max="2000"
+                  value={gateMaxOutputTokens}
+                  onChange={(e) => setGateMaxOutputTokens(Number(e.target.value))}
+                />
+              </Field>
+            </div>
+
+            <Field label="Gate system prompt">
+              <Textarea
+                value={gatePrompt}
+                onChange={(e) => setGatePrompt(e.target.value)}
+                rows={10}
+                className="font-mono text-xs"
+              />
+            </Field>
+
+            {gateError ? <p className="text-sm text-red-500">{gateError}</p> : null}
+            {gateStatus ? <p className="text-sm text-emerald-600">{gateStatus}</p> : null}
+
+            <Button type="submit" disabled={gateSaving}>
+              {gateSaving ? 'Saving…' : 'Save Image Gate'}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Main Geolocation Model</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSave} className="space-y-4">

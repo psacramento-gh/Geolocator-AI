@@ -14,6 +14,7 @@ type PageState =
   | { status: 'analyzing' }
   | { status: 'done'; locations: Location[]; preview: string | null }
   | { status: 'error'; message: string }
+  | { status: 'rejected'; title: string; body: string }
   | { status: 'unpaid' }
   | { status: 'missing_checkout' }
 
@@ -24,7 +25,7 @@ type ProgressStage = {
 }
 
 const PROGRESS_STAGES: ProgressStage[] = [
-  { upTo: 3,   progress: 5,  message: 'Uploading image…' },
+  { upTo: 3,   progress: 5,  message: 'Checking photo…' },
   { upTo: 10,  progress: 20, message: 'Scanning visual cues…' },
   { upTo: 20,  progress: 40, message: 'Analyzing architecture & infrastructure…' },
   { upTo: 35,  progress: 60, message: 'Synthesizing geographic evidence…' },
@@ -87,7 +88,25 @@ export default function SuccessPage() {
 
     const imageBase64 = sessionStorage.getItem('pending_image')
     const mimeType = sessionStorage.getItem('pending_mime_type') ?? 'image/jpeg'
+    const gpsRaw = sessionStorage.getItem('pending_gps_exif')
     const preview = imageBase64 ? `data:${mimeType};base64,${imageBase64}` : null
+
+    let gpsExif: { latitude: number; longitude: number } | undefined
+    if (gpsRaw) {
+      try {
+        const parsed = JSON.parse(gpsRaw) as { latitude?: number; longitude?: number }
+        if (
+          typeof parsed.latitude === 'number' &&
+          typeof parsed.longitude === 'number' &&
+          Number.isFinite(parsed.latitude) &&
+          Number.isFinite(parsed.longitude)
+        ) {
+          gpsExif = { latitude: parsed.latitude, longitude: parsed.longitude }
+        }
+      } catch {
+        // ignore malformed stored EXIF
+      }
+    }
 
     if (!imageBase64) {
       setPageState({ status: 'error', message: 'Image data not found. Please go back and try again.' })
@@ -99,19 +118,39 @@ export default function SuccessPage() {
     fetch('/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageBase64, mimeType }),
+      body: JSON.stringify({ image: imageBase64, mimeType, gpsExif }),
     })
       .then(async (res) => {
         const data = await res.json()
-        if (!res.ok) throw new Error(data.error ?? 'Analysis failed')
+        if (!res.ok) {
+          if (data.code === 'IMAGE_REJECTED') {
+            const err = new Error(data.error ?? 'Photo rejected') as Error & {
+              code?: string
+              title?: string
+            }
+            err.code = 'IMAGE_REJECTED'
+            err.title = data.title
+            throw err
+          }
+          throw new Error(data.error ?? 'Analysis failed')
+        }
         return data
       })
       .then((data) => {
         sessionStorage.removeItem('pending_image')
         sessionStorage.removeItem('pending_mime_type')
+        sessionStorage.removeItem('pending_gps_exif')
         setPageState({ status: 'done', locations: data.locations, preview })
       })
-      .catch((err: Error) => {
+      .catch((err: Error & { code?: string; title?: string }) => {
+        if (err.code === 'IMAGE_REJECTED') {
+          setPageState({
+            status: 'rejected',
+            title: err.title || "This doesn't appear to be a suitable real-world photo",
+            body: err.message,
+          })
+          return
+        }
         setPageState({ status: 'error', message: err.message })
       })
   }, [payment.status, hasAnalyzed])
@@ -168,6 +207,27 @@ export default function SuccessPage() {
               Analyze another photo
             </Button>
           </div>
+        )}
+
+        {pageState.status === 'rejected' && (
+          <CenteredMessage>
+            <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-6 py-4 text-sm text-destructive text-center max-w-sm">
+              <p className="font-medium mb-1">{pageState.title}</p>
+              <p>{pageState.body}</p>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => {
+                sessionStorage.removeItem('pending_image')
+                sessionStorage.removeItem('pending_mime_type')
+                sessionStorage.removeItem('pending_gps_exif')
+                router.push('/')
+              }}
+            >
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Choose another photo
+            </Button>
+          </CenteredMessage>
         )}
 
         {pageState.status === 'error' && (
