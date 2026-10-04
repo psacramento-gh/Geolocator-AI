@@ -36,6 +36,27 @@ type OverviewData = {
     errorType: string | null
     count: number
   }>
+  imageGate?: {
+    totalRequests: number
+    accepted: number
+    rejected: number
+    errors: number
+    passRate: number
+    errorRate: number
+    avgLatencyMs: number
+    rejectionBreakdown: Array<{
+      rejectionReason: string | null
+      count: number
+    }>
+    byModel: Array<{
+      model: string
+      requests: number
+      accepted: number
+      rejected: number
+      errors: number
+      avgLatency: number
+    }>
+  }
 }
 
 function modelLabel(row: { modelId?: string | null; provider?: string | null; model?: string | null }) {
@@ -124,6 +145,62 @@ export default function AdminOverviewPage() {
 
       {data ? (
         <>
+          {data.imageGate ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Image Gate</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+                  <Metric label="Gate requests" value={String(data.imageGate.totalRequests)} />
+                  <Metric label="Accepted" value={String(data.imageGate.accepted)} />
+                  <Metric label="Rejected" value={String(data.imageGate.rejected)} />
+                  <Metric label="Gate errors" value={String(data.imageGate.errors)} />
+                  <Metric label="Pass rate" value={`${data.imageGate.passRate.toFixed(1)}%`} />
+                  <Metric label="Gate error rate" value={`${data.imageGate.errorRate.toFixed(1)}%`} />
+                  <Metric label="Avg gate latency" value={formatMs(data.imageGate.avgLatencyMs)} />
+                </div>
+                {data.imageGate.rejectionBreakdown.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Rejection reasons</p>
+                    {data.imageGate.rejectionBreakdown.map((row) => {
+                      const pct =
+                        data.imageGate && data.imageGate.rejected
+                          ? (row.count / data.imageGate.rejected) * 100
+                          : 0
+                      return (
+                        <div
+                          key={row.rejectionReason || 'unknown'}
+                          className="flex justify-between text-sm"
+                        >
+                          <span>{row.rejectionReason || 'unknown'}</span>
+                          <span className="text-muted-foreground">
+                            {row.count} ({pct.toFixed(0)}%)
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No gate rejections in this range.</p>
+                )}
+                {data.imageGate.byModel.length > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">Gate model</p>
+                    {data.imageGate.byModel.map((row) => (
+                      <div key={row.model} className="flex justify-between text-sm">
+                        <span>{row.model}</span>
+                        <span className="text-muted-foreground">
+                          {row.requests} req · {formatMs(row.avgLatency)} avg
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
+
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Stat title="Requests" value={String(data.totals.totalRequests)} />
             <Stat title="Reported AI cost" value={formatUsd(data.totals.totalProviderCost)} />
@@ -241,5 +318,14 @@ function Stat({ title, value }: { title: string; value: string }) {
         <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
       </CardContent>
     </Card>
+  )
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-0.5 text-lg font-semibold tracking-tight">{value}</p>
+    </div>
   )
 }

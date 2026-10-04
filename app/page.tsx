@@ -2,26 +2,34 @@
 
 import { useState } from 'react'
 import { useCheckout } from '@moneydevkit/nextjs'
-import { Zap, Globe, Lock, ScanSearch } from 'lucide-react'
+import { Zap, Globe, Lock, ScanSearch, Loader2 } from 'lucide-react'
 import Link from 'next/link'
-import { PhotoUpload } from '@/components/PhotoUpload'
+import { PhotoUpload, type ImageReadyPayload } from '@/components/PhotoUpload'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { PENDING_CHECKOUT_ID_KEY } from '@/lib/mdk-checkout'
+import type { ClientGpsExif } from '@/lib/extract-gps-exif'
+
+type GateErrorMessage = { title: string; body: string }
 
 export default function HomePage() {
   const { createCheckout, isLoading } = useCheckout()
   const [imageBase64, setImageBase64] = useState<string | null>(null)
   const [imageMimeType, setImageMimeType] = useState<string>('image/jpeg')
   const [imagePreview, setImagePreview] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [gpsExif, setGpsExif] = useState<ClientGpsExif | undefined>(undefined)
+  const [gpsExifPresent, setGpsExifPresent] = useState(false)
+  const [error, setError] = useState<GateErrorMessage | string | null>(null)
+  const [gating, setGating] = useState(false)
 
-  const handleImageReady = (base64: string, mimeType: string, preview: string) => {
-    setImageBase64(base64)
-    setImageMimeType(mimeType)
-    setImagePreview(preview)
+  const handleImageReady = (payload: ImageReadyPayload) => {
+    setImageBase64(payload.base64)
+    setImageMimeType(payload.mimeType)
+    setImagePreview(payload.preview)
+    setGpsExifPresent(payload.gpsExifPresent)
+    setGpsExif(payload.gpsExif)
     setError(null)
   }
 
@@ -29,9 +37,13 @@ export default function HomePage() {
     setImageBase64(null)
     setImageMimeType('image/jpeg')
     setImagePreview(null)
+    setGpsExif(undefined)
+    setGpsExifPresent(false)
     setError(null)
     sessionStorage.removeItem('pending_image')
     sessionStorage.removeItem('pending_mime_type')
+    sessionStorage.removeItem('pending_gps_exif')
+    sessionStorage.removeItem('pending_gate_pass')
   }
 
   const handleAnalyze = async () => {
@@ -41,11 +53,60 @@ export default function HomePage() {
     }
 
     setError(null)
+    setGating(true)
+
+    let gatePass: string | null = null
+
+    try {
+      const gateRes = await fetch('/api/image-gate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: imageBase64,
+          mimeType: imageMimeType,
+          gpsExif: gpsExifPresent ? gpsExif : undefined,
+        }),
+      })
+      const gateData = await gateRes.json()
+
+      // `accepted` honors IMAGE_GATE_FAIL_OPEN — gate_error only proceeds when fail-open is on.
+      if (!gateData.accepted) {
+        setError(
+          gateData.userMessage || {
+            title:
+              gateData.status === 'gate_error'
+                ? 'Gate unavailable'
+                : "This doesn't appear to be a suitable real-world photo",
+            body:
+              gateData.status === 'gate_error'
+                ? 'Photo checking is temporarily unavailable. Please try again shortly.'
+                : 'Geolocator works best with photographs of real places and their surroundings.',
+          }
+        )
+        return
+      }
+
+      gatePass = typeof gateData.gatePass === 'string' ? gateData.gatePass : null
+    } catch {
+      // Network failure of the gate → fail open; do not block payment.
+    } finally {
+      setGating(false)
+    }
 
     // Store image in sessionStorage so it survives the checkout redirect
     try {
       sessionStorage.setItem('pending_image', imageBase64)
       sessionStorage.setItem('pending_mime_type', imageMimeType)
+      if (gpsExifPresent && gpsExif) {
+        sessionStorage.setItem('pending_gps_exif', JSON.stringify(gpsExif))
+      } else {
+        sessionStorage.removeItem('pending_gps_exif')
+      }
+      if (gatePass) {
+        sessionStorage.setItem('pending_gate_pass', gatePass)
+      } else {
+        sessionStorage.removeItem('pending_gate_pass')
+      }
     } catch {
       setError('Your photo is too large to process. Please try a smaller image.')
       return
@@ -63,6 +124,8 @@ export default function HomePage() {
     if (result.error) {
       sessionStorage.removeItem('pending_image')
       sessionStorage.removeItem('pending_mime_type')
+      sessionStorage.removeItem('pending_gps_exif')
+      sessionStorage.removeItem('pending_gate_pass')
       setError(result.error.message)
       return
     }
@@ -74,6 +137,8 @@ export default function HomePage() {
 
     window.location.href = result.data.checkoutUrl
   }
+
+  const busy = isLoading || gating
 
   return (
     <div className="min-h-screen bg-background">
@@ -116,25 +181,50 @@ export default function HomePage() {
           onImageReady={handleImageReady}
           onClear={handleClear}
           preview={imagePreview}
-          disabled={isLoading}
+          disabled={busy}
         />
 
-        {/* Error */}
+        {/* Error / rejection (unified gate copy) */}
         {error && (
           <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
-            {error}
+            {typeof error === 'string' ? (
+              <p>{error}</p>
+            ) : (
+              <>
+                <p className="font-medium mb-1">{error.title}</p>
+                <p>{error.body}</p>
+              </>
+            )}
+            {imageBase64 ? (
+              <button
+                type="button"
+                onClick={handleClear}
+                className="mt-2 text-sm font-medium underline underline-offset-2"
+              >
+                Choose another photo
+              </button>
+            ) : null}
           </div>
         )}
 
         {/* CTA */}
         <Button
           onClick={handleAnalyze}
-          disabled={!imageBase64 || isLoading}
+          disabled={!imageBase64 || busy}
           size="lg"
           className="w-full gap-2 text-base"
         >
-          <Zap className="h-5 w-5" />
-          {isLoading ? 'Creating invoice…' : 'Analyze for 100 sats'}
+          {gating ? (
+            <>
+              <Loader2 className="h-5 w-5 animate-spin" />
+              Checking photo…
+            </>
+          ) : (
+            <>
+              <Zap className="h-5 w-5" />
+              {isLoading ? 'Creating invoice…' : 'Analyze for 100 sats'}
+            </>
+          )}
         </Button>
 
         {/* Trust row */}

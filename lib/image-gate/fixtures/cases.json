@@ -1,0 +1,50 @@
+{
+  "shouldPass": [
+    { "id": "european_urban_street", "label": "European urban street", "expected": "accept" },
+    { "id": "brazilian_residential", "label": "Brazilian residential street", "expected": "accept" },
+    { "id": "african_rural_road", "label": "African rural road", "expected": "accept" },
+    { "id": "suburban_neighborhood", "label": "Generic suburban neighborhood", "expected": "accept" },
+    { "id": "mountain_landscape", "label": "Mountain landscape", "expected": "accept" },
+    { "id": "beach", "label": "Beach", "expected": "accept" },
+    { "id": "forest_road", "label": "Forest road", "expected": "accept" },
+    { "id": "night_city", "label": "Night city scene", "expected": "accept" },
+    { "id": "street_no_signs", "label": "Street without signs", "expected": "accept" },
+    { "id": "rural_no_buildings", "label": "Rural landscape without buildings", "expected": "accept" },
+    { "id": "interior_signage", "label": "Interior with distinctive signage/environment", "expected": "accept" },
+    { "id": "person_with_background", "label": "Foreground person with substantial background", "expected": "accept" },
+    { "id": "car_in_street", "label": "Car photographed in a visible street environment", "expected": "accept" },
+    { "id": "somewhat_blurry_usable", "label": "Somewhat blurry but usable photograph", "expected": "accept" }
+  ],
+  "shouldReject": [
+    { "id": "portrait_closeup", "label": "Portrait close-up", "expected": "reject", "reasonHint": "extreme_close_up" },
+    { "id": "plate_of_food", "label": "Plate of food", "expected": "reject", "reasonHint": "extreme_close_up" },
+    { "id": "flower_macro", "label": "Flower macro", "expected": "reject", "reasonHint": "extreme_close_up" },
+    { "id": "pet_closeup", "label": "Pet close-up", "expected": "reject", "reasonHint": "extreme_close_up" },
+    { "id": "isolated_product", "label": "Isolated product", "expected": "reject", "reasonHint": "insufficient_context" },
+    { "id": "screenshot", "label": "Screenshot", "expected": "reject", "reasonHint": "screenshot" },
+    { "id": "google_maps_screenshot", "label": "Google Maps screenshot", "expected": "reject", "reasonHint": "map" },
+    { "id": "webpage_screenshot", "label": "Webpage screenshot", "expected": "reject", "reasonHint": "screenshot" },
+    { "id": "scanned_document", "label": "Scanned document", "expected": "reject", "reasonHint": "document" },
+    { "id": "meme", "label": "Meme", "expected": "reject", "reasonHint": "not_real_world_photo" },
+    { "id": "cartoon", "label": "Cartoon", "expected": "reject", "reasonHint": "illustration" },
+    { "id": "painting", "label": "Painting", "expected": "reject", "reasonHint": "illustration" },
+    { "id": "game_screenshot", "label": "Game screenshot", "expected": "reject", "reasonHint": "render" },
+    { "id": "3d_render", "label": "Obvious 3D render", "expected": "reject", "reasonHint": "render" },
+    { "id": "almost_dark", "label": "Almost completely dark photo", "expected": "reject", "reasonHint": "image_quality" },
+    { "id": "completely_blurred", "label": "Completely blurred image", "expected": "reject", "reasonHint": "image_quality" },
+    { "id": "wall_fill", "label": "Wall filling entire frame", "expected": "reject", "reasonHint": "insufficient_context" },
+    { "id": "sky_fill", "label": "Sky filling almost entire frame", "expected": "reject", "reasonHint": "insufficient_context" }
+  ],
+  "borderline": [
+    { "id": "photorealistic_ai", "label": "Photorealistic AI image", "expected": "accept", "note": "syntheticLikelihood signal only" },
+    { "id": "heavily_edited", "label": "Heavily edited photograph", "expected": "accept" },
+    { "id": "indoor_cafe", "label": "Indoor café", "expected": "accept" },
+    { "id": "hotel_room", "label": "Hotel room", "expected": "accept" },
+    { "id": "aerial", "label": "Aerial photograph", "expected": "accept" },
+    { "id": "drone", "label": "Drone photo", "expected": "accept" },
+    { "id": "historical", "label": "Historical photograph", "expected": "accept" },
+    { "id": "vehicle_with_background", "label": "Image dominated by a vehicle but with background", "expected": "accept" },
+    { "id": "low_res_street", "label": "Low-resolution street scene", "expected": "accept" },
+    { "id": "dense_forest", "label": "Dense forest", "expected": "accept" }
+  ]
+}

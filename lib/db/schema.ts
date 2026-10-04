@@ -150,8 +150,40 @@ export const benchmarkResults = pgTable('benchmark_results', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+/** Exact content-hash records for Image Gate duplicate detection (no image bytes). */
+export const imageGateHashes = pgTable('image_gate_hashes', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  contentHash: varchar('content_hash', { length: 64 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/** Image Gate execution analytics (no uploaded image storage). */
+export const imageGateEvents = pgTable('image_gate_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  requestId: varchar('request_id', { length: 64 }).notNull(),
+  model: varchar('model', { length: 256 }).notNull(),
+  /** true=accepted, false=rejected, null=gate infrastructure error */
+  accepted: boolean('accepted'),
+  imageType: varchar('image_type', { length: 64 }),
+  sceneType: varchar('scene_type', { length: 64 }),
+  imageQuality: varchar('image_quality', { length: 32 }),
+  environmentContext: varchar('environment_context', { length: 32 }),
+  potentialClues: jsonb('potential_clues'),
+  syntheticLikelihood: varchar('synthetic_likelihood', { length: 32 }),
+  rejectionReason: varchar('rejection_reason', { length: 64 }),
+  latencyMs: integer('latency_ms'),
+  gateError: text('gate_error'),
+  gpsExifPresent: boolean('gps_exif_present').notNull().default(false),
+  gpsLatitude: doublePrecision('gps_latitude'),
+  gpsLongitude: doublePrecision('gps_longitude'),
+  contentHash: varchar('content_hash', { length: 64 }),
+  phase: varchar('phase', { length: 32 }).notNull().default('analyze'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 export type ModelConfigRow = typeof modelConfigs.$inferSelect
 export type ModelUsageRow = typeof modelUsage.$inferSelect
 export type PlaygroundResultRow = typeof playgroundResults.$inferSelect
 export type BenchmarkCaseRow = typeof benchmarkCases.$inferSelect
 export type BenchmarkResultRow = typeof benchmarkResults.$inferSelect
+export type ImageGateEventRow = typeof imageGateEvents.$inferSelect

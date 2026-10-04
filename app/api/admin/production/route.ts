@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   getProductionModelConfig,
   saveProductionModelConfig,
+  getImageGateModelConfig,
+  saveImageGateModelConfig,
   resolveCapabilities,
   discoverModels,
   ensureModelInList,
@@ -17,16 +19,23 @@ export async function GET() {
   if (denied) return denied
 
   try {
-    const [config, discovered] = await Promise.all([
+    const [config, imageGate, discovered] = await Promise.all([
       getProductionModelConfig(),
+      getImageGateModelConfig(),
       discoverModels(),
     ])
-    const models = ensureModelInList(discovered.models, config.modelId)
+    let models = ensureModelInList(discovered.models, config.modelId)
+    models = ensureModelInList(models, imageGate.modelId)
     const capabilities = resolveCapabilities(config.modelId)
+    const imageGateCapabilities = resolveCapabilities(imageGate.modelId)
 
     return NextResponse.json({
       config,
       capabilities,
+      imageGate: {
+        config: imageGate,
+        capabilities: imageGateCapabilities,
+      },
       models,
       discovery: discovered.status,
       providers: discovered.providers.map((p) => ({
@@ -52,6 +61,33 @@ export async function PUT(req: NextRequest) {
 
   try {
     const body = await req.json()
+    const target = body.target === 'image_gate' ? 'image_gate' : 'production'
+
+    if (target === 'image_gate') {
+      const modelId = String(body.modelId || body.model || '')
+      const prompt = String(body.prompt || '')
+
+      if (!modelId || !prompt.trim()) {
+        return NextResponse.json({ error: 'modelId and prompt are required' }, { status: 400 })
+      }
+      if (!modelId.includes('/')) {
+        return NextResponse.json(
+          { error: 'modelId must be a Gateway id in provider/model format' },
+          { status: 400 }
+        )
+      }
+
+      const config = await saveImageGateModelConfig({
+        modelId,
+        prompt,
+        temperature: body.temperature !== undefined ? Number(body.temperature) : undefined,
+        maxOutputTokens:
+          body.maxOutputTokens !== undefined ? Number(body.maxOutputTokens) : undefined,
+      })
+
+      return NextResponse.json({ imageGate: { config } })
+    }
+
     const modelId = String(body.modelId || body.model || '')
     const prompt = String(body.prompt || '')
 
