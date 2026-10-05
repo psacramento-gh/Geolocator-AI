@@ -2,6 +2,12 @@ import { randomUUID } from 'crypto'
 import { generateObject } from 'ai'
 import { getImageGateModelConfig, isImageGateFailOpen } from '@/lib/ai/config'
 import { classifyGatewayError, sanitizeErrorMessage } from '@/lib/ai/errors'
+import {
+  buildPrivacyGatewayOptions,
+  isEndedFreeModelError,
+  isZeroDataRetentionUnavailable,
+  resolvePaidModelId,
+} from '@/lib/ai/gateway-privacy'
 import { DEFAULT_IMAGE_GATE_MODEL_ID } from '@/lib/ai/registry'
 import {
   isDuplicateContentHash,
@@ -225,7 +231,7 @@ export async function runImageGate(options: RunImageGateOptions): Promise<ImageG
     }
   }
 
-  const model = config.modelId
+  let model = config.modelId
 
   try {
     const imagePart = {
@@ -234,28 +240,98 @@ export async function runImageGate(options: RunImageGateOptions): Promise<ImageG
       data: det.buffer,
     }
 
-    const { object } = await generateObject({
-      model,
-      schema: imageGateResultSchema,
-      schemaName: 'ImageGateResult',
-      schemaDescription: 'Image suitability assessment for visual geolocation',
-      system: config.prompt,
-      messages: [
-        {
-          role: 'user',
-          content: [imagePart, { type: 'text', text: IMAGE_GATE_USER_TEXT }],
-        },
-      ],
-      temperature: config.temperature,
-      maxOutputTokens: config.maxOutputTokens,
-      providerOptions: {
-        gateway: {
-          tags: [`app:geolocator`, `mode:image_gate`, `phase:${options.phase}`],
-          disallowPromptTraining: true,
-          zeroDataRetention: true,
-        },
-      },
-    })
+    const runOnce = async (args: {
+      modelId: string
+      zeroDataRetention: boolean
+      allowFallbackFromFree: boolean
+    }) =>
+      generateObject({
+        model: args.modelId,
+        schema: imageGateResultSchema,
+        schemaName: 'ImageGateResult',
+        schemaDescription: 'Image suitability assessment for visual geolocation',
+        system: config.prompt,
+        messages: [
+          {
+            role: 'user',
+            content: [imagePart, { type: 'text', text: IMAGE_GATE_USER_TEXT }],
+          },
+        ],
+        temperature: config.temperature,
+        maxOutputTokens: config.maxOutputTokens,
+        providerOptions: {
+          gateway: buildPrivacyGatewayOptions({
+            tags: [`app:geolocator`, `mode:image_gate`, `phase:${options.phase}`],
+            disallowPromptTraining: true,
+            zeroDataRetention: args.zeroDataRetention,
+            allowFallbackFromFree: args.allowFallbackFromFree,
+          }),
+        } as Parameters<typeof generateObject>[0]['providerOptions'],
+      })
+
+    let object
+    try {
+      ;({ object } = await runOnce({
+        modelId: model,
+        zeroDataRetention: true,
+        allowFallbackFromFree: model.endsWith('-free'),
+      }))
+    } catch (firstErr) {
+      // Hobby plans reject ZDR — retry without it.
+      if (isZeroDataRetentionUnavailable(firstErr)) {
+        console.warn(
+          `[image_gate:${model}] ZDR not available on Hobby plan; retrying without ZDR`
+        )
+        try {
+          ;({ object } = await runOnce({
+            modelId: model,
+            zeroDataRetention: false,
+            allowFallbackFromFree: model.endsWith('-free'),
+          }))
+        } catch (secondErr) {
+          // Free-tier model ids may have been retired — map to paid id + allowFallbackFromFree.
+          if (isEndedFreeModelError(secondErr) && model.endsWith('-free')) {
+            const paidId = resolvePaidModelId(model)
+            console.warn(
+              `[image_gate:${model}] Free tier ended; retrying as ${paidId} with allowFallbackFromFree`
+            )
+            model = paidId
+            ;({ object } = await runOnce({
+              modelId: paidId,
+              zeroDataRetention: false,
+              allowFallbackFromFree: true,
+            }))
+          } else {
+            throw secondErr
+          }
+        }
+      } else if (isEndedFreeModelError(firstErr) && model.endsWith('-free')) {
+        const paidId = resolvePaidModelId(model)
+        console.warn(
+          `[image_gate:${model}] Free tier ended; retrying as ${paidId} with allowFallbackFromFree`
+        )
+        model = paidId
+        try {
+          ;({ object } = await runOnce({
+            modelId: paidId,
+            zeroDataRetention: true,
+            allowFallbackFromFree: true,
+          }))
+        } catch (zdrErr) {
+          if (isZeroDataRetentionUnavailable(zdrErr)) {
+            ;({ object } = await runOnce({
+              modelId: paidId,
+              zeroDataRetention: false,
+              allowFallbackFromFree: true,
+            }))
+          } else {
+            throw zdrErr
+          }
+        }
+      } else {
+        throw firstErr
+      }
+    }
 
     const result = normalizeGateAcceptance(object as ImageGateResult)
     const latencyMs = Date.now() - started

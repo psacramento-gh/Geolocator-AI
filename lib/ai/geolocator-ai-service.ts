@@ -5,6 +5,10 @@ import { getReadyDb } from '@/lib/db'
 import { modelUsage } from '@/lib/db/schema'
 import { resolveCapabilities } from './capabilities'
 import { classifyGatewayError, sanitizeErrorMessage } from './errors'
+import {
+  buildPrivacyGatewayOptions,
+  isZeroDataRetentionUnavailable,
+} from './gateway-privacy'
 import { normalizeGeoLocationResult } from './normalize'
 import { splitModelId } from './registry'
 import type {
@@ -189,34 +193,6 @@ export async function analyzeLocation(
       callSettings.maxOutputTokens = options.config.maxOutputTokens
     }
 
-    const gatewayOptions: Record<string, unknown> = {
-      tags: [`app:geolocator`, `mode:${options.mode}`],
-      ...(options.mode === 'production'
-        ? {
-            disallowPromptTraining: true,
-            zeroDataRetention: true,
-          }
-        : {}),
-      ...(options.pinProvider ? { only: [options.pinProvider] } : {}),
-      ...(options.user ? { user: options.user } : {}),
-    }
-
-    const providerOptions: Record<string, Record<string, unknown>> = {
-      gateway: gatewayOptions,
-    }
-
-    if (capabilities.reasoning) {
-      const reasoningOpts = mapReasoningToProviderOptions(modelId, options.config.reasoningLevel)
-      if (reasoningOpts) {
-        for (const [key, value] of Object.entries(reasoningOpts)) {
-          providerOptions[key] = {
-            ...(providerOptions[key] || {}),
-            ...(value as Record<string, unknown>),
-          }
-        }
-      }
-    }
-
     const imagePart = {
       type: 'file' as const,
       mediaType: options.mimeType || 'image/jpeg',
@@ -230,27 +206,68 @@ export async function analyzeLocation(
         : {}),
     }
 
-    const result = await generateObject({
-      model: modelId,
-      schema: geoLocationSchema,
-      schemaName: 'GeoLocationResult',
-      schemaDescription: 'Top location guesses for where a photograph was taken',
-      system: options.config.prompt,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            imagePart,
-            {
-              type: 'text',
-              text: 'Analyze this photograph and return the JSON as instructed.',
-            },
-          ],
-        },
-      ],
-      ...callSettings,
-      providerOptions: providerOptions as Parameters<typeof generateObject>[0]['providerOptions'],
-    })
+    const runOnce = async (zeroDataRetention: boolean) => {
+      const gatewayOptions = buildPrivacyGatewayOptions({
+        tags: [`app:geolocator`, `mode:${options.mode}`],
+        disallowPromptTraining: options.mode === 'production',
+        // Prefer ZDR in production; Hobby plans reject it and we retry without.
+        zeroDataRetention: options.mode === 'production' && zeroDataRetention,
+        only: options.pinProvider ? [options.pinProvider] : undefined,
+        user: options.user,
+      })
+
+      const providerOptions: Record<string, Record<string, unknown>> = {
+        gateway: gatewayOptions,
+      }
+
+      if (capabilities.reasoning) {
+        const reasoningOpts = mapReasoningToProviderOptions(modelId, options.config.reasoningLevel)
+        if (reasoningOpts) {
+          for (const [key, value] of Object.entries(reasoningOpts)) {
+            providerOptions[key] = {
+              ...(providerOptions[key] || {}),
+              ...(value as Record<string, unknown>),
+            }
+          }
+        }
+      }
+
+      return generateObject({
+        model: modelId,
+        schema: geoLocationSchema,
+        schemaName: 'GeoLocationResult',
+        schemaDescription: 'Top location guesses for where a photograph was taken',
+        system: options.config.prompt,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              imagePart,
+              {
+                type: 'text',
+                text: 'Analyze this photograph and return the JSON as instructed.',
+              },
+            ],
+          },
+        ],
+        ...callSettings,
+        providerOptions: providerOptions as Parameters<typeof generateObject>[0]['providerOptions'],
+      })
+    }
+
+    let result
+    try {
+      result = await runOnce(true)
+    } catch (firstErr) {
+      if (options.mode === 'production' && isZeroDataRetentionUnavailable(firstErr)) {
+        console.warn(
+          `[analyzeLocation:${modelId}] ZDR not available on Hobby plan; retrying without ZDR`
+        )
+        result = await runOnce(false)
+      } else {
+        throw firstErr
+      }
+    }
 
     const output = normalizeGeoLocationResult(result.object, modelId)
     const gatewayProvider = extractGatewayProvider(result.providerMetadata, modelId)
