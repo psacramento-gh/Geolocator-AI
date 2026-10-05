@@ -95,8 +95,14 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
     capabilities: { ...VISION_STRUCTURED },
   },
   {
+    id: 'inclusionai/ling-3.0-flash-vl',
+    label: 'Ling 3.0 Flash VL',
+    enabled: true,
+    capabilities: { ...VISION_STRUCTURED },
+  },
+  {
     id: 'inclusionai/ling-3.0-flash-vl-free',
-    label: 'Ling 3.0 Flash VL Free',
+    label: 'Ling 3.0 Flash VL Free (legacy id)',
     enabled: true,
     capabilities: { ...VISION_STRUCTURED },
   },
@@ -104,8 +110,8 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
 
 export const DEFAULT_PRODUCTION_MODEL_ID = 'google/gemini-3.1-flash-lite'
 
-/** Default free vision model for the pre-inference Image Gate. */
-export const DEFAULT_IMAGE_GATE_MODEL_ID = 'inclusionai/ling-3.0-flash-vl-free'
+/** Default vision model for the pre-inference Image Gate (paid id; free tier ended). */
+export const DEFAULT_IMAGE_GATE_MODEL_ID = 'inclusionai/ling-3.0-flash-vl'
 
 /** Default models pre-selected in playground / benchmarks when available. */
 export const DEFAULT_COMPARE_MODEL_IDS = [
