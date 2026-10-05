@@ -62,6 +62,12 @@ export function classifyGatewayError(err: unknown, modelId?: string): GatewayErr
     lower.includes('type validation')
   ) {
     type = 'INVALID_MODEL_RESPONSE'
+  } else if (
+    lower.includes('zero data retention') ||
+    lower.includes('zerodataretention') ||
+    (lower.includes('zdr') && lower.includes('hobby'))
+  ) {
+    type = 'UNSUPPORTED_CONFIGURATION'
   } else if (lower.includes('unsupported')) {
     type = 'UNSUPPORTED_CONFIGURATION'
   } else if (!status && !lower.includes('gateway')) {
@@ -113,6 +119,9 @@ export function adminFacingError(type: GatewayErrorType): string {
 
 export function publicFacingError(type: GatewayErrorType): string {
   if (type === 'BUDGET_EXCEEDED' || type === 'RATE_LIMITED' || type === 'MODEL_UNAVAILABLE') {
+    return 'AI analysis is temporarily unavailable. Please try again later.'
+  }
+  if (type === 'UNSUPPORTED_CONFIGURATION') {
     return 'AI analysis is temporarily unavailable. Please try again later.'
   }
   return 'Analysis failed'

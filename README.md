@@ -33,7 +33,7 @@ cp .env.local.example .env.local
 | `ADMIN_SECRET` | Password for `/admin` (server-only) |
 | `DATABASE_URL` | Neon Postgres connection string |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob token (benchmark images) |
-| `IMAGE_GATE_MODEL` | Free vision model for suitability checks |
+| `IMAGE_GATE_MODEL` | Vision model for suitability checks (default: Ling Flash VL) |
 | `IMAGE_GATE_FAIL_OPEN` | Continue to geolocation when the gate is unavailable (default: true) |
 
 On Vercel, enable **AI Gateway** for the project and use OIDC (`vercel link` + `vercel env pull` for local). No per-provider API keys are required for the normal Gateway path.
