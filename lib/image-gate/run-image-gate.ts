@@ -280,7 +280,7 @@ export async function runImageGate(options: RunImageGateOptions): Promise<ImageG
       // Hobby plans reject ZDR — retry without it.
       if (isZeroDataRetentionUnavailable(firstErr)) {
         console.warn(
-          `[image_gate:${model}] Zero Data Retention unavailable on this plan; retrying without ZDR`
+          `[image_gate:${model}] ZDR not available on Hobby plan; retrying without ZDR`
         )
         try {
           ;({ object } = await runOnce({

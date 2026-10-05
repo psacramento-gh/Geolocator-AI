@@ -261,7 +261,7 @@ export async function analyzeLocation(
     } catch (firstErr) {
       if (options.mode === 'production' && isZeroDataRetentionUnavailable(firstErr)) {
         console.warn(
-          `[analyzeLocation:${modelId}] Zero Data Retention unavailable on this plan; retrying without ZDR`
+          `[analyzeLocation:${modelId}] ZDR not available on Hobby plan; retrying without ZDR`
         )
         result = await runOnce(false)
       } else {
